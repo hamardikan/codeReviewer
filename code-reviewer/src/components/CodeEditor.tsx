@@ -116,7 +116,7 @@ export default function CodeEditor({
     <div className="w-full">
       {/* Language selector and file upload */}
       <div className="flex justify-between items-center mb-2">
-        <div>
+        <div className="relative">
           <label 
             htmlFor="language-select" 
             className={`text-sm font-medium ${theme === 'dark' ? 'text-gray-300' : 'text-gray-700'} mr-2`}
@@ -128,12 +128,13 @@ export default function CodeEditor({
             value={language}
             onChange={(e) => onLanguageChange(e.target.value)}
             className={`
-              py-1 px-2 text-sm rounded border
+              py-1 px-2 text-sm rounded border appearance-none
               ${theme === 'dark' 
                 ? 'bg-gray-700 border-gray-600 text-white' 
                 : 'bg-white border-gray-300 text-gray-900'
               }
             `}
+            style={{ paddingRight: '2rem' }}
           >
             {languages.map((lang) => (
               <option key={lang.value} value={lang.value}>
@@ -141,6 +142,11 @@ export default function CodeEditor({
               </option>
             ))}
           </select>
+          <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2 pt-6">
+            <svg className="h-4 w-4 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+            </svg>
+          </div>
         </div>
 
         <button
