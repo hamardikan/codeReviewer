@@ -53,7 +53,7 @@ import {
     const genAI = new GoogleGenerativeAI(apiKey);
     
     const model = genAI.getGenerativeModel({
-      model: "gemini-2.0-flash-thinking-exp-01-21",
+      model: "gemini-2.0-flash",
       generationConfig: {
         temperature: 0.4, // Lower temperature for more consistent reviews
         topP: 0.8,
@@ -451,4 +451,167 @@ import {
         timeSaved: "Unable to estimate"
       }
     };
+  }
+
+  /**
+ * Streams code review results from Gemini API.
+ * @param code - Code to be reviewed
+ * @param language - Programming language of the code
+ * @param reviewFocus - Optional focus areas for the review
+ * @returns ReadableStream of Server-Sent Events
+ */
+export async function reviewCodeStream(
+    code: string,
+    language: string,
+    reviewFocus?: {
+      cleanCode?: boolean,
+      performance?: boolean,
+      security?: boolean
+    }
+  ): Promise<ReadableStream> {
+    const { model } = initGeminiApi();
+    const prompt = createCodeReviewPrompt(code, language, reviewFocus);
+    
+    // Create encoder for text encoding
+    const encoder = new TextEncoder();
+    
+    // Initialize response structure with placeholders
+    const initialResponse: Partial<CodeReviewResponse> = {
+      summary: "",
+      issues: [],
+      suggestions: [],
+      improvedCode: "",
+      learningResources: [],
+      seniorReviewTime: {
+        before: "",
+        after: "",
+        timeSaved: ""
+      }
+    };
+    
+    // Create a stream for the response
+    return new ReadableStream({
+      async start(controller) {
+        try {
+          // Send initial state event
+          controller.enqueue(encoder.encode(`event: state\ndata: ${JSON.stringify({ status: 'analyzing', progress: 0 })}\n\n`));
+          
+          // Initialize Gemini chat session
+          const chatSession = model.startChat({ history: [] });
+          
+          // Start streaming response from Gemini
+          const streamResult = await chatSession.sendMessageStream(prompt);
+          
+          // Track accumulated text for JSON parsing
+          let accumulatedText = "";
+          let currentResponse = { ...initialResponse };
+          const lastSent = { ...initialResponse };
+          let progress = 10; // Start at 10% after initialization
+          
+          // Process each chunk as it arrives
+          for await (const chunk of streamResult.stream) {
+            const chunkText = chunk.text();
+            accumulatedText += chunkText;
+            
+            try {
+              // Try to find and parse JSON in the accumulated text
+              const jsonMatch = accumulatedText.match(/\{[\s\S]*\}/);
+              if (jsonMatch) {
+                const potentialJson = jsonMatch[0];
+                try {
+                  // Attempt to parse the JSON
+                  const parsedJson = JSON.parse(potentialJson);
+                  
+                  // Update current response with parsed data
+                  currentResponse = { ...currentResponse, ...parsedJson };
+                  
+                  // Calculate progress
+                  progress = Math.min(90, progress + 5); // Cap at 90% until complete
+                  
+                  // Determine what parts have been updated
+                  const updates: Record<string, unknown> = {};
+                  
+                  // Check each key to see what's changed since last sent
+                  for (const key of Object.keys(currentResponse) as Array<keyof typeof currentResponse>) {
+                    if (key && currentResponse[key] !== lastSent[key as keyof typeof lastSent]) {
+                      if (Array.isArray(currentResponse[key]) && 
+                          Array.isArray(lastSent[key as keyof typeof lastSent]) && 
+                          (currentResponse[key] as unknown[]).length > (lastSent[key as keyof typeof lastSent] as unknown[]).length) {
+                        // For arrays, send only if there are new items
+                        updates[key] = currentResponse[key];
+                        const typedKey = key as keyof typeof lastSent;
+                        lastSent[typedKey] = JSON.parse(JSON.stringify(currentResponse[key]));
+                      } else if (!Array.isArray(currentResponse[key])) {
+                        // For non-arrays, send if the value has changed
+                        updates[key] = currentResponse[key];
+                        const typedKey = key as keyof typeof lastSent;
+                        lastSent[typedKey] = JSON.parse(JSON.stringify(currentResponse[key]));
+                      }
+                    }
+                  }
+                  
+                  // Send progress update
+                  controller.enqueue(encoder.encode(`event: state\ndata: ${JSON.stringify({ status: 'analyzing', progress })}\n\n`));
+                  
+                  // Send partial response if there are updates
+                  if (Object.keys(updates).length > 0) {
+                    controller.enqueue(encoder.encode(`event: update\ndata: ${JSON.stringify(updates)}\n\n`));
+                  }
+                } catch {
+                  // JSON parsing failed, continue accumulating
+                }
+              }
+            } catch {
+              // Continue despite errors in partial parsing
+            }
+          }
+          
+          // Get the final complete response text
+          const response = await streamResult.response;
+          const responseText = response.text();
+          
+          try {
+            // Parse the complete response
+            const finalResponse = parseReviewResponse(responseText);
+            
+            // Validate the quality of the review and retry if needed
+            const validatedResponse = validateReviewQuality(finalResponse) 
+              ? finalResponse 
+              : await retryReview(chatSession, code);
+            
+            // Send completion event with full response
+            controller.enqueue(encoder.encode(`event: state\ndata: ${JSON.stringify({ status: 'completed', progress: 100 })}\n\n`));
+            controller.enqueue(encoder.encode(`event: complete\ndata: ${JSON.stringify(validatedResponse)}\n\n`));
+          } catch (error) {
+            // If parsing fails at the end, try the retry mechanisms
+            console.error('Error parsing final JSON response:', error);
+            const retryResponse = await retryReview(chatSession, code);
+            
+            // Send the retry response
+            controller.enqueue(encoder.encode(`event: state\ndata: ${JSON.stringify({ status: 'completed', progress: 100 })}\n\n`));
+            controller.enqueue(encoder.encode(`event: complete\ndata: ${JSON.stringify(retryResponse)}\n\n`));
+          }
+          
+          // Close the stream
+          controller.close();
+        } catch (error) {
+          // Handle errors
+          console.error('Streaming error:', error);
+          
+          // Create fallback response
+          const fallbackResponse = createFallbackResponse(code);
+          
+          // Send error event
+          controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ 
+            message: error instanceof Error ? error.message : 'Unknown error during code review' 
+          })}\n\n`));
+          
+          // Send fallback response
+          controller.enqueue(encoder.encode(`event: complete\ndata: ${JSON.stringify(fallbackResponse)}\n\n`));
+          
+          // Close the stream
+          controller.close();
+        }
+      }
+    });
   }
