@@ -28,37 +28,42 @@ const STORAGE_KEYS = {
  * @returns The ID of the saved review
  */
 export function saveReview(
-  originalCode: string,
-  language: string,
-  review: CodeReviewResponse
-): string {
-  // Generate a unique ID for the review
-  const id = generateId();
-  
-  // Create a name for the review based on the code content
-  const name = createReviewName(originalCode, language);
-  
-  // Create the review history item
-  const reviewItem: ReviewHistoryItem = {
-    id,
-    name,
-    language,
-    timestamp: Date.now(),
-    originalCode,
-    review,
-  };
-  
-  // Get existing reviews
-  const reviews = getReviews();
-  
-  // Add the new review
-  reviews.unshift(reviewItem);
-  
-  // Save the updated reviews
-  localStorage.setItem(STORAGE_KEYS.REVIEWS, JSON.stringify(reviews));
-  
-  return id;
-}
+    originalCode: string,
+    language: string,
+    review: CodeReviewResponse
+  ): string {
+    // Generate a unique ID for the review
+    const id = generateId();
+    
+    // Create a name for the review based on the code content
+    const name = createReviewName(originalCode, language);
+    
+    // Create the review history item
+    const reviewItem: ReviewHistoryItem = {
+      id,
+      name,
+      language,
+      timestamp: Date.now(),
+      originalCode,
+      review,
+    };
+    
+    // Get existing reviews
+    const reviews = getReviews();
+    
+    // Add the new review
+    reviews.unshift(reviewItem);
+    
+    // Save the updated reviews
+    localStorage.setItem(STORAGE_KEYS.REVIEWS, JSON.stringify(reviews));
+    
+    // Dispatch an event to notify listeners about the change
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new Event('reviewsUpdated'));
+    }
+    
+    return id;
+  }
 
 /**
  * Gets all reviews from local storage.

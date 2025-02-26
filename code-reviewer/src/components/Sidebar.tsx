@@ -130,13 +130,14 @@ export default function Sidebar({
           History
         </div>
         
-        {reviews.length === 0 ? (
-          <div className="px-4 py-3 text-sm text-gray-500">
-            No review history yet
-          </div>
-        ) : (
-          <div className="space-y-1">
-            {reviews.map((review) => (
+        {/* This is the part that needs fixing - we need to handle the client-side hydration properly */}
+        <div className="space-y-1">
+          {reviews.length === 0 ? (
+            <div className="px-4 py-3 text-sm text-gray-500">
+              No review history yet
+            </div>
+          ) : (
+            reviews.map((review) => (
               <div 
                 key={review.id} 
                 className={`
@@ -186,9 +187,9 @@ export default function Sidebar({
                   <span className="text-gray-500">{formatDate(review.timestamp)}</span>
                 </div>
               </div>
-            ))}
-          </div>
-        )}
+            ))
+          )}
+        </div>
       </div>
       
       {/* Footer */}

@@ -1,14 +1,15 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import MainLayout from '@/components/layout/MainLayout';
 import CodeEditor from '@/components/CodeEditor';
 import ReviewDisplay from '@/components/ReviewDisplay';
 import { ThemeProvider } from '@/contexts/ThemeContext';
-import { reviewCode } from '@/lib/gemini';
 import { saveReview, isLocalStorageAvailable } from '@/lib/localStorage';
 
 export default function HomePage() {
+  const router = useRouter();
   const [code, setCode] = useState('');
   const [language, setLanguage] = useState('javascript');
   const [isReviewing, setIsReviewing] = useState(false);
@@ -34,19 +35,47 @@ export default function HomePage() {
     setError(null);
 
     try {
-      const result = await reviewCode(code, language, reviewFocus);
-      setReviewResult(result);
+      const response = await fetch('/api/review', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          code,
+          language,
+          reviewFocus,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to review code');
+      }
+
+      const data = await response.json();
+      setReviewResult(data.review);
 
       // Save review to local storage if available
       if (isLocalStorageAvailable()) {
-        saveReview(code, language, result);
+        const reviewId = saveReview(code, language, data.review);
+        
+        // Dispatch custom event to notify about the review update
+        window.dispatchEvent(new Event('reviewsUpdated'));
+        
+        // Optionally, redirect to the review page
+        // router.push(`/reviews/${reviewId}`);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error reviewing code:', err);
-      setError('Failed to review code. Please try again.');
+      setError(err.message || 'Failed to review code. Please try again.');
     } finally {
       setIsReviewing(false);
     }
+  };
+
+  // Handle viewing a specific review
+  const viewReview = (reviewId: string) => {
+    router.push(`/reviews/${reviewId}`);
   };
 
   // Handle review focus change
@@ -133,12 +162,14 @@ export default function HomePage() {
             <div>
               <div className="flex justify-between items-center mb-6">
                 <h1 className="text-2xl font-bold">Code Review Results</h1>
-                <button
-                  onClick={() => setReviewResult(null)}
-                  className="px-4 py-2 text-sm rounded border hover:bg-gray-100 dark:hover:bg-gray-700"
-                >
-                  New Review
-                </button>
+                <div className="flex space-x-3">
+                  <button
+                    onClick={() => setReviewResult(null)}
+                    className="px-4 py-2 text-sm rounded border hover:bg-gray-100 dark:hover:bg-gray-700"
+                  >
+                    New Review
+                  </button>
+                </div>
               </div>
               
               <ReviewDisplay

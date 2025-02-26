@@ -2,50 +2,55 @@
  * Main layout component for the code review application.
  * Provides the sidebar, theme toggle, and main content area.
  */
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useTheme } from '@/contexts/ThemeContext';
 import { getReviews, deleteReview, ReviewHistoryItem } from '@/lib/localStorage';
+import { useRouter } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import ThemeToggle from '@/components/ThemeToggle';
 
 interface MainLayoutProps {
   children: React.ReactNode;
   activeReviewId?: string;
-  onSelectReview?: (reviewId: string) => void;
 }
 
 export default function MainLayout({ 
   children, 
-  activeReviewId,
-  onSelectReview
+  activeReviewId
 }: MainLayoutProps) {
   const { theme } = useTheme();
+  const router = useRouter();
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [reviews, setReviews] = useState<ReviewHistoryItem[]>(() => {
-    // Only run in browser
-    if (typeof window !== 'undefined') {
-      return getReviews();
-    }
-    return [];
-  });
+  // Initialize with empty array to avoid hydration mismatch
+  const [reviews, setReviews] = useState<ReviewHistoryItem[]>([]);
+  // Add a flag to track client-side rendering
+  const [isClient, setIsClient] = useState(false);
 
-  // Effect to refresh reviews when local storage changes
-  React.useEffect(() => {
-    const handleStorageChange = () => {
-      setReviews(getReviews());
-    };
-
-    // Add event listener for storage changes
-    window.addEventListener('storage', handleStorageChange);
-    
-    // Refresh reviews on mount
-    handleStorageChange();
-
-    // Clean up event listener
-    return () => {
-      window.removeEventListener('storage', handleStorageChange);
-    };
+  // Effect to set client-side rendering flag
+  useEffect(() => {
+    setIsClient(true);
   }, []);
+
+  // Effect to fetch reviews after component has mounted (client-side only)
+  useEffect(() => {
+    if (isClient) {
+      setReviews(getReviews());
+
+      // Listen for storage events to update reviews when changed
+      const handleStorageChange = () => {
+        setReviews(getReviews());
+      };
+
+      // Create a custom event for internal updates
+      window.addEventListener('storage', handleStorageChange);
+      window.addEventListener('reviewsUpdated', handleStorageChange);
+
+      return () => {
+        window.removeEventListener('storage', handleStorageChange);
+        window.removeEventListener('reviewsUpdated', handleStorageChange);
+      };
+    }
+  }, [isClient]);
 
   // Handle review deletion
   const handleDeleteReview = (id: string) => {
@@ -54,8 +59,17 @@ export default function MainLayout({
       const success = deleteReview(id);
       if (success) {
         setReviews(getReviews());
+        // If the deleted review is the active one, navigate back to the home page
+        if (id === activeReviewId) {
+          router.push('/');
+        }
       }
     }
+  };
+
+  // Handle review selection
+  const handleSelectReview = (id: string) => {
+    router.push(`/reviews/${id}`);
   };
 
   // Toggle sidebar
@@ -65,13 +79,13 @@ export default function MainLayout({
 
   return (
     <div className={`flex min-h-screen ${theme === 'dark' ? 'dark bg-gray-900 text-gray-100' : 'bg-gray-50 text-gray-900'}`}>
-      {/* Sidebar */}
+      {/* Only render reviews in the sidebar after client-side hydration */}
       <Sidebar
         isOpen={isSidebarOpen}
         onToggle={toggleSidebar}
-        reviews={reviews}
+        reviews={isClient ? reviews : []}
         activeReviewId={activeReviewId}
-        onSelectReview={onSelectReview}
+        onSelectReview={handleSelectReview}
         onDeleteReview={handleDeleteReview}
       />
 
