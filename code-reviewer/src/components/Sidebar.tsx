@@ -161,7 +161,9 @@ export default function Sidebar({
                     className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600"
                     onClick={(e) => {
                       e.stopPropagation();
-                      onDeleteReview && onDeleteReview(review.id);
+                      if (onDeleteReview) {
+                        onDeleteReview(review.id);
+                      }
                     }}
                   >
                     <svg 

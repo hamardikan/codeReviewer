@@ -2,6 +2,7 @@
 
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
+import Link from 'next/link';
 import MainLayout from '@/components/layout/MainLayout';
 import ReviewDisplay from '@/components/ReviewDisplay';
 import { ThemeProvider } from '@/contexts/ThemeContext';
@@ -58,13 +59,13 @@ export default function ReviewPage() {
         <MainLayout>
           <div className="p-6 max-w-4xl mx-auto text-center">
             <h1 className="text-2xl font-bold mb-4">Review Not Found</h1>
-            <p className="mb-6">The review you're looking for doesn't exist or may have been deleted.</p>
-            <a 
+            <p className="mb-6">The review you&apos;re looking for doesn&apos;t exist or may have been deleted.</p>
+            <Link 
               href="/"
               className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
             >
               Go to New Review
-            </a>
+            </Link>
           </div>
         </MainLayout>
       </ThemeProvider>

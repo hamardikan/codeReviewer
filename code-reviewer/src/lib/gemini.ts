@@ -232,7 +232,7 @@ import {
     try {
       // First attempt: try to parse the entire response as JSON
       return JSON.parse(responseText);
-    } catch (error) {
+    } catch {
       // Second attempt: look for JSON object in the response
       try {
         const jsonMatch = responseText.match(/\{[\s\S]*\}/);
@@ -282,16 +282,16 @@ import {
         // Validate the quality of the review
         if (!validateReviewQuality(response)) {
           // If quality check fails, try again with more specific instructions
-          return await retryReview(chatSession, code, language, reviewFocus);
+          return await retryReview(chatSession, code);
         }
         
         return response;
       } catch (parseError) {
         console.error('Error parsing JSON response:', parseError);
-        return await retryReview(chatSession, code, language, reviewFocus);
+        return await retryReview(chatSession, code);
       }
-    } catch (error) {
-      console.error('Error calling Gemini API:', error);
+    } catch (apiError) {
+      console.error('Error calling Gemini API:', apiError);
       throw new Error('Failed to get code review from Gemini API');
     }
   }
@@ -300,19 +300,11 @@ import {
    * Retries the code review with more explicit formatting instructions.
    * @param chatSession - Active chat session
    * @param code - Code to be reviewed
-   * @param language - Programming language of the code
-   * @param reviewFocus - Optional focus areas for the review
    * @returns Structured code review response
    */
   async function retryReview(
     chatSession: ChatSession, 
-    code: string, 
-    language: string,
-    reviewFocus?: {
-      cleanCode?: boolean,
-      performance?: boolean,
-      security?: boolean
-    }
+    code: string
   ): Promise<CodeReviewResponse> {
     const retryPrompt = `
   Your previous response couldn't be properly parsed as JSON. Please review the code again and respond ONLY with a valid JSON object.
@@ -370,8 +362,8 @@ import {
         // One more attempt with even stricter instructions
         return await lastChanceReview(chatSession, code);
       }
-    } catch (error) {
-      console.error('Error in retry review:', error);
+    } catch (retryError) {
+      console.error('Error in retry review:', retryError);
       return createFallbackResponse(code);
     }
   }
@@ -420,8 +412,8 @@ import {
         console.error('Final attempt failed to parse JSON:', finalError);
         return createFallbackResponse(code);
       }
-    } catch (error) {
-      console.error('Error in final review attempt:', error);
+    } catch (lastAttemptError) {
+      console.error('Error in final review attempt:', lastAttemptError);
       return createFallbackResponse(code);
     }
   }

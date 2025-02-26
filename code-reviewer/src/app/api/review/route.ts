@@ -27,11 +27,11 @@ export async function POST(request: NextRequest) {
 
     // Return the review
     return NextResponse.json({ review });
-  } catch (error: any) {
+  }   catch (error: unknown) {
     console.error('Error in review API:', error);
     
     return NextResponse.json(
-      { error: error.message || 'Failed to review code' },
+      { error: error instanceof Error ? error.message : 'Failed to review code' },
       { status: 500 }
     );
   }

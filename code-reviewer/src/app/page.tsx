@@ -1,21 +1,28 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
+import React, { useState } from 'react';
 import MainLayout from '@/components/layout/MainLayout';
 import CodeEditor from '@/components/CodeEditor';
 import ReviewDisplay from '@/components/ReviewDisplay';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import { saveReview, isLocalStorageAvailable } from '@/lib/localStorage';
+import { CodeReviewResponse } from '@/lib/gemini';
+
+
+
+interface ReviewFocus {
+  cleanCode: boolean;
+  performance: boolean;
+  security: boolean;
+}
 
 export default function HomePage() {
-  const router = useRouter();
   const [code, setCode] = useState('');
   const [language, setLanguage] = useState('javascript');
   const [isReviewing, setIsReviewing] = useState(false);
-  const [reviewResult, setReviewResult] = useState<any>(null);
+  const [reviewResult, setReviewResult] = useState<CodeReviewResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [reviewFocus, setReviewFocus] = useState({
+  const [reviewFocus, setReviewFocus] = useState<ReviewFocus>({
     cleanCode: true,
     performance: false,
     security: false,
@@ -57,7 +64,7 @@ export default function HomePage() {
 
       // Save review to local storage if available
       if (isLocalStorageAvailable()) {
-        const reviewId = saveReview(code, language, data.review);
+        saveReview(code, language, data.review);
         
         // Dispatch custom event to notify about the review update
         window.dispatchEvent(new Event('reviewsUpdated'));
@@ -65,21 +72,16 @@ export default function HomePage() {
         // Optionally, redirect to the review page
         // router.push(`/reviews/${reviewId}`);
       }
-    } catch (err: any) {
+    } catch (err: unknown) {
       console.error('Error reviewing code:', err);
-      setError(err.message || 'Failed to review code. Please try again.');
+      setError(err instanceof Error ? err.message : 'Failed to review code. Please try again.');
     } finally {
       setIsReviewing(false);
     }
   };
 
-  // Handle viewing a specific review
-  const viewReview = (reviewId: string) => {
-    router.push(`/reviews/${reviewId}`);
-  };
-
   // Handle review focus change
-  const handleReviewFocusChange = (focus: keyof typeof reviewFocus) => {
+  const handleReviewFocusChange = (focus: keyof ReviewFocus) => {
     setReviewFocus(prev => ({
       ...prev,
       [focus]: !prev[focus]

@@ -14,8 +14,7 @@ interface ReviewDisplayProps {
 
 export default function ReviewDisplay({
   originalCode,
-  review,
-  language
+  review
 }: ReviewDisplayProps) {
   const { theme } = useTheme();
   const [activeTab, setActiveTab] = useState<'summary' | 'comparison'>('summary');
