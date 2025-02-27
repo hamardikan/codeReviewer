@@ -95,33 +95,45 @@ import {
     const focusAreas = [];
     
     if (!reviewFocus || reviewFocus.cleanCode) {
-      focusAreas.push(
-        "Function and variable naming",
-        "Code organization and structure",
-        "Function length and complexity",
-        "Error handling approach",
-        "Consistency in style and patterns",
-        "Code duplication and reusability"
-      );
-    }
-    
-    if (reviewFocus?.performance) {
-      focusAreas.push(
-        "Algorithm efficiency",
-        "Resource usage optimization",
-        "Unnecessary computations",
-        "Performance bottlenecks"
-      );
-    }
-    
-    if (reviewFocus?.security) {
-      focusAreas.push(
-        "Input validation",
-        "Authentication/authorization issues",
-        "Data exposure risks",
-        "Common security vulnerabilities"
-      );
-    }
+        focusAreas.push(
+          "Function and variable naming (using descriptive, intention-revealing names)",
+          "Code organization and structure (cohesive classes, appropriate abstractions)",
+          "Function length and complexity (short, focused functions that do one thing)",
+          "Error handling approach (consistent, graceful error handling)",
+          "Consistency in style and patterns (following established conventions)",
+          "Code duplication and DRY principle violations (avoiding repeated logic)",
+          "Hard-coded values (replacing with named constants)",
+          "Nested conditionals (encapsulating complex logic in separate functions)",
+          "Comment quality (avoiding unnecessary comments, focusing on 'why' not 'what')",
+          "Appropriate use of language features and idioms"
+        );
+      }
+      
+      if (reviewFocus?.performance) {
+        focusAreas.push(
+          "Algorithm efficiency and Big O complexity",
+          "Resource usage optimization (memory, CPU, network, etc.)",
+          "Unnecessary computations or operations",
+          "Performance bottlenecks and hot paths",
+          "Data structure selection and usage",
+          "Caching and memoization opportunities",
+          "Asynchronous and parallel processing options",
+          "Lazy loading and initialization potential"
+        );
+      }
+      
+      if (reviewFocus?.security) {
+        focusAreas.push(
+          "Input validation and sanitization",
+          "Authentication and authorization issues",
+          "Data exposure risks and sensitive information handling",
+          "Common security vulnerabilities (XSS, CSRF, injection attacks, etc.)",
+          "Secure communication and data transfer",
+          "Proper error handling without leaking sensitive information",
+          "Secure storage of credentials and secrets",
+          "Principle of least privilege application"
+        );
+      }
   
     return `
   You are an expert senior software engineer conducting a code review for a junior developer. Your mission is to provide a comprehensive review that will:
