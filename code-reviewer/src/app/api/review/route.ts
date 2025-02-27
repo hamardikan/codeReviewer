@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
 import { enqueueReviewJob, getJobStatus, cancelJob } from '@/lib/queue';
+export const runtime = 'edge';
 
 // POST endpoint to submit a new review job
 export async function POST(request: NextRequest) {
