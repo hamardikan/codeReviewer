@@ -15,7 +15,6 @@ export interface ReviewJob {
   result?: CodeReviewResponse;
   error?: string;
   createdAt: number;
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   cancelToken?: AbortController;
 }
 

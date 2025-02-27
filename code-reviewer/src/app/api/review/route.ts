@@ -4,6 +4,9 @@ import { reviewCode } from '@/lib/gemini';
 // Enable Edge Runtime
 export const runtime = 'edge';
 
+// Define a type for the event data
+type EventData = Record<string, unknown> | string;
+
 // Helper function to create a properly formatted SSE response
 function createSSEStream() {
   const encoder = new TextEncoder();
@@ -11,7 +14,7 @@ function createSSEStream() {
   const writer = stream.writable.getWriter();
 
   // Helper to format and send SSE events
-  async function sendEvent(event: string, data: any) {
+  async function sendEvent(event: string, data: EventData) {
     const formattedData = typeof data === 'string' ? data : JSON.stringify(data);
     await writer.write(
       encoder.encode(`event: ${event}\ndata: ${formattedData}\n\n`)
@@ -20,7 +23,7 @@ function createSSEStream() {
 
   return {
     stream: stream.readable,
-    async sendEvent(event: string, data: any) {
+    async sendEvent(event: string, data: EventData) {
       await sendEvent(event, data);
     },
     async close() {
@@ -83,7 +86,6 @@ export async function POST(request: NextRequest) {
         progress: 70,
         message: 'Processing code review...'
       });
-
       const result = await reviewCode(code, language, reviewFocus);
 
       // Final progress update
@@ -94,7 +96,7 @@ export async function POST(request: NextRequest) {
       });
 
       // Send the complete result
-      await sendEvent('complete', result);
+      await sendEvent('complete', { ...result });
     } catch (error) {
       console.error('Error in review API:', error);
       await sendEvent('error', {
@@ -116,7 +118,8 @@ export async function POST(request: NextRequest) {
 }
 
 // Handle GET requests too
-export async function GET(request: NextRequest) {
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export async function GET(_request: NextRequest) {
   return new Response(JSON.stringify({ message: 'Please use POST for code reviews' }), {
     status: 405,
     headers: { 'Content-Type': 'application/json' }
