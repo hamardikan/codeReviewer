@@ -1,6 +1,7 @@
 import { NextRequest } from 'next/server';
-import { reviewCode } from '@/lib/gemini';
+import { enqueueReviewJob, getJobStatus, cancelJob } from '@/lib/queue';
 
+// POST endpoint to submit a new review job
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -22,94 +23,78 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Create a transform stream
-    const encoder = new TextEncoder();
-    const stream = new TransformStream();
-    const writer = stream.writable.getWriter();
+    // Enqueue the job and get a job ID
+    const jobId = enqueueReviewJob(code, language, reviewFocus);
 
-    // Process the code review in a non-blocking way
-    (async () => {
-      try {
-        // Send initial progress update
-        await writer.write(encoder.encode(`data: ${JSON.stringify({ 
-          status: 'analyzing', 
-          progress: 10,
-          message: 'Analyzing code structure...'
-        })}\n\n`));
-        
-        // Add some artificial progress updates
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        await writer.write(encoder.encode(`data: ${JSON.stringify({ 
-          status: 'analyzing', 
-          progress: 25,
-          message: 'Identifying potential issues...'
-        })}\n\n`));
-        
-        await new Promise(resolve => setTimeout(resolve, 1000));
-        await writer.write(encoder.encode(`data: ${JSON.stringify({ 
-          status: 'analyzing', 
-          progress: 40,
-          message: 'Evaluating code quality...'
-        })}\n\n`));
-        
-        // Get the full review
-        const review = await reviewCode(code, language, reviewFocus);
-        
-        // Send more progress updates
-        await writer.write(encoder.encode(`data: ${JSON.stringify({ 
-          status: 'analyzing', 
-          progress: 80,
-          message: 'Generating improvement suggestions...'
-        })}\n\n`));
-        
-        await new Promise(resolve => setTimeout(resolve, 500));
-        await writer.write(encoder.encode(`data: ${JSON.stringify({ 
-          status: 'analyzing', 
-          progress: 95,
-          message: 'Finalizing review...'
-        })}\n\n`));
-        
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-        // Send the final review
-        await writer.write(encoder.encode(`data: ${JSON.stringify({ 
-          status: 'completed', 
-          progress: 100,
-          review
-        })}\n\n`));
-        
-        // Close the stream
-        await writer.close();
-      } catch (error) {
-        // Handle errors during processing
-        console.error('Error during review processing:', error);
-        
-        try {
-          await writer.write(encoder.encode(`data: ${JSON.stringify({ 
-            status: 'error', 
-            message: error instanceof Error ? error.message : 'An error occurred during the code review'
-          })}\n\n`));
-          await writer.close();
-        } catch (closeError) {
-          console.error('Error closing stream:', closeError);
-        }
-      }
-    })();
-
-    // Return the streaming response
-    return new Response(stream.readable, {
-      headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache, no-transform',
-        'Connection': 'keep-alive',
-      },
-    });
+    // Return the job ID immediately
+    return new Response(
+      JSON.stringify({ 
+        jobId, 
+        message: 'Code review job submitted successfully',
+        status: 'pending'
+      }),
+      { status: 202, headers: { 'Content-Type': 'application/json' } }
+    );
   } catch (error: unknown) {
     console.error('Error in review API:', error);
     
     return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Failed to review code' }),
+      JSON.stringify({ error: error instanceof Error ? error.message : 'Failed to submit code review job' }),
       { status: 500, headers: { 'Content-Type': 'application/json' } }
     );
   }
+}
+
+// GET endpoint to check job status
+export async function GET(request: NextRequest) {
+  const url = new URL(request.url);
+  const jobId = url.searchParams.get('jobId');
+
+  if (!jobId) {
+    return new Response(
+      JSON.stringify({ error: 'Job ID is required' }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
+  const job = getJobStatus(jobId);
+
+  if (!job) {
+    return new Response(
+      JSON.stringify({ error: 'Job not found', status: 'not_found' }),
+      { status: 404, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
+  return new Response(
+    JSON.stringify(job),
+    { status: 200, headers: { 'Content-Type': 'application/json' } }
+  );
+}
+
+// DELETE endpoint to cancel a job
+export async function DELETE(request: NextRequest) {
+  const url = new URL(request.url);
+  const jobId = url.searchParams.get('jobId');
+
+  if (!jobId) {
+    return new Response(
+      JSON.stringify({ error: 'Job ID is required' }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
+  const success = cancelJob(jobId);
+
+  if (!success) {
+    return new Response(
+      JSON.stringify({ error: 'Job not found or already completed' }),
+      { status: 404, headers: { 'Content-Type': 'application/json' } }
+    );
+  }
+
+  return new Response(
+    JSON.stringify({ message: 'Job cancelled successfully' }),
+    { status: 200, headers: { 'Content-Type': 'application/json' } }
+  );
 }

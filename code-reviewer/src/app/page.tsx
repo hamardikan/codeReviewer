@@ -37,17 +37,10 @@ export default function HomePage() {
     security: false,
   });
   
-  // Reference to store the EventSource
-  const eventSourceRef = useRef<EventSource | null>(null);
-  
-  // Cleanup function for the EventSource
-  useEffect(() => {
-    return () => {
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-      }
-    };
-  }, []);
+  // Add a state for the job ID
+  const [jobId, setJobId] = useState<string | null>(null);
+  // Polling interval reference
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
   
   // Check if code is empty
   const isCodeEmpty = code.trim() === '';
@@ -62,7 +55,16 @@ export default function HomePage() {
     return 'Finalizing review...';
   };
 
-  // Handle code review submission - SIMPLIFIED APPROACH
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+      }
+    };
+  }, []);
+  
+  // Handle code review submission with queue approach
   const handleReviewCode = async () => {
     if (isCodeEmpty) {
       setError('Please enter some code to review.');
@@ -72,21 +74,15 @@ export default function HomePage() {
     // Reset previous results and errors
     setReviewResult(null);
     setError(null);
+    setJobId(null);
     setReviewProgress({
       status: 'analyzing',
       progress: 5,
-      message: 'Initializing code review...'
+      message: 'Submitting code for review...'
     });
 
-    // Close any existing event source
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
-    }
-
-    // Use a simpler, more direct approach
     try {
-      // Send the POST request directly
+      // Submit the job
       const response = await fetch('/api/review', {
         method: 'POST',
         headers: {
@@ -98,131 +94,133 @@ export default function HomePage() {
           reviewFocus,
         }),
       });
-      
-      // Check if it's a non-streaming response
-      const contentType = response.headers.get('Content-Type');
-      
-      if (contentType && contentType.includes('application/json')) {
-        // Handle regular JSON response
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.error || 'Failed to review code');
-        }
-        
-        const data = await response.json();
-        
-        setReviewResult(data.review);
-        setReviewProgress({
-          status: 'completed',
-          progress: 100
-        });
-        
-        setToast({
-          message: 'Code review completed!',
-          type: 'success'
-        });
-        
-        // Save to localStorage
-        if (isLocalStorageAvailable()) {
-          saveReview(code, language, data.review);
-          window.dispatchEvent(new Event('reviewsUpdated'));
-        }
-        
-        return;
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to submit code review');
       }
+
+      const data = await response.json();
+      const { jobId } = data;
       
-      // If we reached here, it's a streaming response
-      const reader = response.body?.getReader();
-      
-      if (!reader) {
-        throw new Error('Failed to get stream reader');
-      }
-      
-      // Function to process chunks
-      const processChunk = async () => {
-        let streamData = '';
-        const decoder = new TextDecoder();
-        
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            
-            if (done) {
-              break;
-            }
-            
-            // Decode the chunk
-            const chunkText = decoder.decode(value, { stream: true });
-            streamData += chunkText;
-            
-            // Process SSE messages
-            const messages = streamData.split('\n\n');
-            
-            // Keep the last part if it doesn't end with \n\n
-            const lastPart = messages.pop() || '';
-            streamData = lastPart;
-            
-            // Process each complete message
-            for (const message of messages) {
-              if (message.trim() === '') continue;
-              
-              // Parse "data: {...}" format
-              const dataMatch = message.match(/^data:\s*(.+)$/m);
-              if (dataMatch && dataMatch[1]) {
-                try {
-                  const data = JSON.parse(dataMatch[1]);
-                  
-                  // Handle progress
-                  if (data.status === 'analyzing') {
-                    setReviewProgress({
-                      status: 'analyzing',
-                      progress: data.progress || 0,
-                      message: data.message || getProgressMessage(data.progress || 0)
-                    });
-                  }
-                  
-                  // Handle completion
-                  if (data.status === 'completed' && data.review) {
-                    setReviewResult(data.review);
-                    setReviewProgress({
-                      status: 'completed',
-                      progress: 100
-                    });
-                    
-                    // Save to localStorage
-                    if (isLocalStorageAvailable()) {
-                      saveReview(code, language, data.review);
-                      window.dispatchEvent(new Event('reviewsUpdated'));
-                    }
-                    
-                    setToast({
-                      message: 'Code review completed!',
-                      type: 'success'
-                    });
-                  }
-                  
-                  // Handle errors
-                  if (data.status === 'error') {
-                    handleReviewError(data.message || 'An error occurred during the code review');
-                  }
-                } catch (e) {
-                  console.error('Error parsing message:', e, dataMatch[1]);
-                }
-              }
-            }
-          }
-        } catch (e) {
-          console.error('Error reading stream:', e);
-          throw e;
-        }
-      };
-      
-      // Start processing the stream
-      await processChunk();
-      
+      setJobId(jobId);
+      setReviewProgress({
+        status: 'analyzing',
+        progress: 10,
+        message: 'Code review in progress...'
+      });
+
+      // Start polling for updates
+      startPollingJobStatus(jobId);
     } catch (err) {
       handleReviewError(err);
     }
+  };
+
+  // Poll for job status updates
+  const startPollingJobStatus = (jobId: string) => {
+    // Clear any existing interval
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+    }
+
+    // Set up polling with exponential backoff
+    let pollingInterval = 1000; // Start with 1 second
+    const maxPollingInterval = 5000; // Max 5 seconds
+    
+    const poll = async () => {
+      try {
+        const response = await fetch(`/api/review?jobId=${jobId}`);
+        
+        if (!response.ok) {
+          if (response.status === 404) {
+            // Job not found (may have been cleaned up)
+            throw new Error('Review job not found');
+          }
+          throw new Error('Failed to fetch job status');
+        }
+
+        const job = await response.json();
+        
+        // Update progress based on job status
+        if (job.status === 'processing' || job.status === 'pending') {
+          setReviewProgress({
+            status: 'analyzing',
+            progress: job.progress || 0,
+            message: job.message || getProgressMessage(job.progress || 0)
+          });
+          
+          // Continue polling with increased interval (capped at max)
+          pollingInterval = Math.min(pollingInterval * 1.2, maxPollingInterval);
+          pollingIntervalRef.current = setTimeout(poll, pollingInterval);
+        }
+        // Handle completed job
+        else if (job.status === 'completed' && job.result) {
+          setReviewResult(job.result);
+          setReviewProgress({
+            status: 'completed',
+            progress: 100
+          });
+          
+          // Save to localStorage
+          if (isLocalStorageAvailable()) {
+            saveReview(code, language, job.result);
+            window.dispatchEvent(new Event('reviewsUpdated'));
+          }
+          
+          setToast({
+            message: 'Code review completed!',
+            type: 'success'
+          });
+          
+          // No need to poll anymore
+          if (pollingIntervalRef.current) {
+            clearTimeout(pollingIntervalRef.current);
+            pollingIntervalRef.current = null;
+          }
+        }
+        // Handle cancelled job
+        else if (job.status === 'cancelled') {
+          setReviewProgress({
+            status: 'idle',
+            progress: 0
+          });
+          
+          setToast({
+            message: 'Code review was cancelled',
+            type: 'info'
+          });
+          
+          // No need to poll anymore
+          if (pollingIntervalRef.current) {
+            clearTimeout(pollingIntervalRef.current);
+            pollingIntervalRef.current = null;
+          }
+        }
+        // Handle error
+        else if (job.status === 'error') {
+          handleReviewError(job.error || 'An error occurred during code review');
+          
+          // No need to poll anymore
+          if (pollingIntervalRef.current) {
+            clearTimeout(pollingIntervalRef.current);
+            pollingIntervalRef.current = null;
+          }
+        }
+      } catch (error) {
+        console.error('Error polling job status:', error);
+        handleReviewError(error);
+        
+        // Stop polling on error
+        if (pollingIntervalRef.current) {
+          clearTimeout(pollingIntervalRef.current);
+          pollingIntervalRef.current = null;
+        }
+      }
+    };
+    
+    // Start polling
+    poll();
   };
 
   // Helper function to handle review errors
@@ -249,19 +247,32 @@ export default function HomePage() {
   };
 
   // Cancel ongoing review
-  const handleCancelReview = () => {
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
+  const handleCancelReview = async () => {
+    // Stop polling
+    if (pollingIntervalRef.current) {
+      clearTimeout(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
     }
+    
+    // Send cancellation request to server if we have a job ID
+    if (jobId) {
+      try {
+        await fetch(`/api/review?jobId=${jobId}`, {
+          method: 'DELETE'
+        });
+        
+        setToast({
+          message: 'Code review cancelled',
+          type: 'info'
+        });
+      } catch (error) {
+        console.error('Error cancelling job:', error);
+      }
+    }
+    
     setReviewProgress({
       status: 'idle',
       progress: 0
-    });
-    
-    setToast({
-      message: 'Code review cancelled',
-      type: 'info'
     });
   };
 
