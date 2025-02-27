@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useRef, useEffect } from 'react';
+export const maxDuration = 60;
+import React, { useState, useEffect, useRef } from 'react';
 import MainLayout from '@/components/layout/MainLayout';
 import CodeEditor from '@/components/CodeEditor';
 import ReviewDisplay from '@/components/ReviewDisplay';
@@ -37,10 +38,8 @@ export default function HomePage() {
     security: false,
   });
   
-  // Add a state for the job ID
-  const [jobId, setJobId] = useState<string | null>(null);
-  // Polling interval reference
-  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  // Use a ref to track the abort controller for cancellation
+  const abortControllerRef = useRef<AbortController | null>(null);
   
   // Check if code is empty
   const isCodeEmpty = code.trim() === '';
@@ -55,16 +54,16 @@ export default function HomePage() {
     return 'Finalizing review...';
   };
 
-  // Cleanup polling on unmount
+  // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (pollingIntervalRef.current) {
-        clearInterval(pollingIntervalRef.current);
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
       }
     };
   }, []);
   
-  // Handle code review submission with queue approach
+  // Handle code review submission
   const handleReviewCode = async () => {
     if (isCodeEmpty) {
       setError('Please enter some code to review.');
@@ -74,15 +73,24 @@ export default function HomePage() {
     // Reset previous results and errors
     setReviewResult(null);
     setError(null);
-    setJobId(null);
+    
+    // Cancel any ongoing review
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    
+    // Create a new abort controller
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+    
     setReviewProgress({
       status: 'analyzing',
       progress: 5,
-      message: 'Submitting code for review...'
+      message: 'Starting code review...'
     });
 
     try {
-      // Submit the job
+      // Start the review as a streaming process
       const response = await fetch('/api/review', {
         method: 'POST',
         headers: {
@@ -93,134 +101,132 @@ export default function HomePage() {
           language,
           reviewFocus,
         }),
+        signal: abortController.signal
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || 'Failed to submit code review');
+        throw new Error(`HTTP error ${response.status}`);
       }
 
-      const data = await response.json();
-      const { jobId } = data;
-      
-      setJobId(jobId);
-      setReviewProgress({
-        status: 'analyzing',
-        progress: 10,
-        message: 'Code review in progress...'
-      });
+      if (!response.body) {
+        throw new Error('Response body is null');
+      }
 
-      // Start polling for updates
-      startPollingJobStatus(jobId);
+      // Process the stream
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      
+      // Initialize a partial result object
+      let partialResult: Partial<CodeReviewResponse> = {
+        summary: "",
+        issues: [],
+        suggestions: [],
+        improvedCode: "",
+        learningResources: []
+      };
+      
+      let buffer = '';
+
+      // Process the stream chunks
+      while (true) {
+        const { done, value } = await reader.read();
+        
+        if (done) {
+          break;
+        }
+        
+        // Decode the chunk and add to buffer
+        buffer += decoder.decode(value, { stream: true });
+        
+        // Process any complete events in the buffer
+        const events = buffer.split('\n\n');
+        buffer = events.pop() || ''; // The last element might be incomplete
+        
+        for (const event of events) {
+          if (!event.trim()) continue;
+          
+          // Parse the event
+          const eventType = event.match(/^event: (.+)$/m)?.[1];
+          const data = event.match(/^data: (.+)$/m)?.[1];
+          
+          if (eventType && data) {
+            try {
+              const parsedData = JSON.parse(data);
+              
+              // Handle different event types
+              switch (eventType) {
+                case 'state':
+                  setReviewProgress({
+                    status: parsedData.status === 'completed' ? 'completed' : 'analyzing',
+                    progress: parsedData.progress || 0,
+                    message: parsedData.message || getProgressMessage(parsedData.progress || 0)
+                  });
+                  break;
+                  
+                case 'update':
+                  // Update our partial result with the new data
+                  partialResult = {
+                    ...partialResult,
+                    ...parsedData
+                  };
+                  
+                  // If we have enough data to display something meaningful, update the UI
+                  if (partialResult.summary && partialResult.issues && partialResult.issues.length > 0) {
+                    setReviewResult({
+                      summary: partialResult.summary || "",
+                      issues: partialResult.issues || [],
+                      suggestions: partialResult.suggestions || [],
+                      improvedCode: partialResult.improvedCode || code,
+                      learningResources: partialResult.learningResources || [],
+                      seniorReviewTime: partialResult.seniorReviewTime
+                    } as CodeReviewResponse);
+                  }
+                  break;
+                  
+                case 'complete':
+                  setReviewResult(parsedData);
+                  setReviewProgress({
+                    status: 'completed',
+                    progress: 100
+                  });
+                  
+                  // Save to localStorage
+                  if (isLocalStorageAvailable()) {
+                    saveReview(code, language, parsedData);
+                    window.dispatchEvent(new Event('reviewsUpdated'));
+                  }
+                  
+                  setToast({
+                    message: 'Code review completed!',
+                    type: 'success'
+                  });
+                  break;
+                  
+                case 'error':
+                  throw new Error(parsedData.message || 'Unknown error');
+                  
+                default:
+                  console.log(`Unhandled event type: ${eventType}`, parsedData);
+              }
+            } catch (e) {
+              console.error('Error parsing event data:', e);
+            }
+          }
+        }
+      }
+      
+      // Clear the abort controller reference now that we're done
+      abortControllerRef.current = null;
+      
     } catch (err) {
+      // Don't treat aborted requests as errors
+      if (err instanceof Error && err.name === 'AbortError') {
+        console.log('Request was cancelled');
+        return;
+      }
+      
       handleReviewError(err);
     }
-  };
-
-  // Poll for job status updates
-  const startPollingJobStatus = (jobId: string) => {
-    // Clear any existing interval
-    if (pollingIntervalRef.current) {
-      clearInterval(pollingIntervalRef.current);
-    }
-
-    // Set up polling with exponential backoff
-    let pollingInterval = 1000; // Start with 1 second
-    const maxPollingInterval = 5000; // Max 5 seconds
-    
-    const poll = async () => {
-      try {
-        const response = await fetch(`/api/review?jobId=${jobId}`);
-        
-        if (!response.ok) {
-          if (response.status === 404) {
-            // Job not found (may have been cleaned up)
-            throw new Error('Review job not found');
-          }
-          throw new Error('Failed to fetch job status');
-        }
-
-        const job = await response.json();
-        
-        // Update progress based on job status
-        if (job.status === 'processing' || job.status === 'pending') {
-          setReviewProgress({
-            status: 'analyzing',
-            progress: job.progress || 0,
-            message: job.message || getProgressMessage(job.progress || 0)
-          });
-          
-          // Continue polling with increased interval (capped at max)
-          pollingInterval = Math.min(pollingInterval * 1.2, maxPollingInterval);
-          pollingIntervalRef.current = setTimeout(poll, pollingInterval);
-        }
-        // Handle completed job
-        else if (job.status === 'completed' && job.result) {
-          setReviewResult(job.result);
-          setReviewProgress({
-            status: 'completed',
-            progress: 100
-          });
-          
-          // Save to localStorage
-          if (isLocalStorageAvailable()) {
-            saveReview(code, language, job.result);
-            window.dispatchEvent(new Event('reviewsUpdated'));
-          }
-          
-          setToast({
-            message: 'Code review completed!',
-            type: 'success'
-          });
-          
-          // No need to poll anymore
-          if (pollingIntervalRef.current) {
-            clearTimeout(pollingIntervalRef.current);
-            pollingIntervalRef.current = null;
-          }
-        }
-        // Handle cancelled job
-        else if (job.status === 'cancelled') {
-          setReviewProgress({
-            status: 'idle',
-            progress: 0
-          });
-          
-          setToast({
-            message: 'Code review was cancelled',
-            type: 'info'
-          });
-          
-          // No need to poll anymore
-          if (pollingIntervalRef.current) {
-            clearTimeout(pollingIntervalRef.current);
-            pollingIntervalRef.current = null;
-          }
-        }
-        // Handle error
-        else if (job.status === 'error') {
-          handleReviewError(job.error || 'An error occurred during code review');
-          
-          // No need to poll anymore
-          if (pollingIntervalRef.current) {
-            clearTimeout(pollingIntervalRef.current);
-            pollingIntervalRef.current = null;
-          }
-        }
-      } catch (error) {
-        console.error('Error polling job status:', error);
-        handleReviewError(error);
-        
-        // Stop polling on error
-        if (pollingIntervalRef.current) {
-          clearTimeout(pollingIntervalRef.current);
-          pollingIntervalRef.current = null;
-        }
-      }
-    };
-    
-    // Start polling
-    poll();
   };
 
   // Helper function to handle review errors
@@ -236,6 +242,9 @@ export default function HomePage() {
       message: 'Failed to complete code review',
       type: 'error'
     });
+    
+    // Clear the abort controller
+    abortControllerRef.current = null;
   };
 
   // Handle review focus change
@@ -247,35 +256,25 @@ export default function HomePage() {
   };
 
   // Cancel ongoing review
-  const handleCancelReview = async () => {
-    // Stop polling
-    if (pollingIntervalRef.current) {
-      clearTimeout(pollingIntervalRef.current);
-      pollingIntervalRef.current = null;
-    }
-    
-    // Send cancellation request to server if we have a job ID
-    if (jobId) {
-      try {
-        await fetch(`/api/review?jobId=${jobId}`, {
-          method: 'DELETE'
-        });
-        
-        setToast({
-          message: 'Code review cancelled',
-          type: 'info'
-        });
-      } catch (error) {
-        console.error('Error cancelling job:', error);
-      }
+  const handleCancelReview = () => {
+    // Abort the fetch request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
     }
     
     setReviewProgress({
       status: 'idle',
       progress: 0
     });
+    
+    setToast({
+      message: 'Code review cancelled',
+      type: 'info'
+    });
   };
 
+  // The rest of your component remains largely the same
   return (
     <ThemeProvider>
       <MainLayout>
