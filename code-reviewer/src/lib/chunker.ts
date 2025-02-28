@@ -67,8 +67,8 @@ export interface TargetArea {
 
 // Default options
 const DEFAULT_OPTIONS: Required<ChunkerOptions> = {
-  maxChunkSize: 1000, // Max lines per chunk
-  minChunkSize: 50,   // Min lines per chunk
+  maxChunkSize: 1500, // Max lines per chunk
+  minChunkSize: 100,   // Min lines per chunk
   overlapPercentage: 15, // Increased overlap between chunks for better context
   preserveImports: true, // Include import statements in each chunk
   smartChunking: true,   // Use language-specific chunking

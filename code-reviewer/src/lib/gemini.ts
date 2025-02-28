@@ -118,19 +118,19 @@ export interface CodeReviewOptions {
  */
 export function initGeminiApi(): { model: GenerativeModel } {
   const apiKey = process.env.GEMINI_API_KEY || process.env.NEXT_PUBLIC_GEMINI_API_KEY;
-  
+
   if (!apiKey) {
     throw new Error('GEMINI_API_KEY is not defined in environment variables');
   }
-  
+
   const genAI = new GoogleGenerativeAI(apiKey);
-  
+
   const model = genAI.getGenerativeModel({
     model: "gemini-2.0-flash",
     generationConfig: {
-      temperature: 0.4, // Lower temperature for more consistent reviews
-      topP: 0.8,
-      topK: 40,
+      temperature: 0.7,
+      topP: 0.95,
+      topK: 50,
       maxOutputTokens: 65536,
       responseMimeType: "text/plain",
     },
@@ -145,7 +145,7 @@ export function initGeminiApi(): { model: GenerativeModel } {
       },
     ],
   });
-  
+
   return { model };
 }
 
@@ -165,19 +165,19 @@ export async function performPreliminaryAnalysis(
 ): Promise<CodeReviewMap> {
   const { model } = initGeminiApi();
   const prompt = createPreliminaryAnalysisPrompt(code, language, options);
-  
+
   try {
     const chatSession = model.startChat({
       history: [],
     });
-    
+
     const result = await chatSession.sendMessage(prompt);
     const responseText = result.response.text();
-    
+
     try {
       // Parse the response
       const response = JSON.parse(responseText);
-      
+
       // Validate and return the result
       return validateAndRepairReviewMap(response, code);
     } catch (parseError) {
@@ -202,7 +202,7 @@ function createPreliminaryAnalysisPrompt(
 ): string {
   const { reviewFocus } = options;
   const focusAreas = [];
-  
+
   if (!reviewFocus || reviewFocus.cleanCode) {
     focusAreas.push(
       "Meaningful Names (clear, intention-revealing variable and function names)",
@@ -213,7 +213,7 @@ function createPreliminaryAnalysisPrompt(
       "Simplicity (DRY principle, reduced complexity, no dead code)"
     );
   }
-    
+
   if (reviewFocus?.performance) {
     focusAreas.push(
       "Algorithm Efficiency (optimal algorithms and Big O complexity)",
@@ -224,7 +224,7 @@ function createPreliminaryAnalysisPrompt(
       "Caching and Memoization (reusing computed results)"
     );
   }
-    
+
   if (reviewFocus?.security) {
     focusAreas.push(
       "Input Validation (sanitizing and validating all inputs)",
@@ -305,12 +305,12 @@ This preliminary analysis will be used to guide a context-aware code review proc
  */
 function validateAndRepairReviewMap(response: Record<string, unknown>, code: string): CodeReviewMap {
   const lineCount = code.split('\n').length;
-  
+
   // Ensure the targetAreas array exists and is valid
   if (!Array.isArray(response.targetAreas)) {
     response.targetAreas = [];
   }
-  
+
   // Validate and repair target areas
   response.targetAreas = (response.targetAreas as Array<{
     startLine?: number;
@@ -321,16 +321,16 @@ function validateAndRepairReviewMap(response: Record<string, unknown>, code: str
     cleanCodePrinciple?: string;
   }>).map((area) => ({
     startLine: typeof area.startLine === 'number' ? area.startLine : 0,
-    endLine: typeof area.endLine === 'number' ? 
-      Math.min(area.endLine, lineCount - 1) : 
+    endLine: typeof area.endLine === 'number' ?
+      Math.min(area.endLine, lineCount - 1) :
       Math.min(area.startLine ? area.startLine + 5 : 5, lineCount - 1),
     type: area.type || 'unknown',
     description: area.description || 'Area needs improvement',
-    severity: (area.severity && ['critical', 'high', 'medium', 'low'].includes(area.severity)) ? 
+    severity: (area.severity && ['critical', 'high', 'medium', 'low'].includes(area.severity)) ?
       area.severity as 'critical' | 'high' | 'medium' | 'low' : 'medium',
     cleanCodePrinciple: area.cleanCodePrinciple || getCategoryFromDescription(area.description || '')
   }));
-  
+
   // Ensure overallStructure exists
   if (!response.overallStructure) {
     response.overallStructure = {
@@ -341,28 +341,28 @@ function validateAndRepairReviewMap(response: Record<string, unknown>, code: str
   } else {
     // Cast to the correct type
     const overallStructure = response.overallStructure as CodeReviewMap['overallStructure'];
-    
+
     // Validate functions
     if (!Array.isArray(overallStructure.functions)) {
       overallStructure.functions = [];
     }
-    
+
     // Validate classes
     if (!Array.isArray(overallStructure.classes)) {
       overallStructure.classes = [];
     }
-    
+
     // Validate imports
     if (!Array.isArray(overallStructure.imports)) {
       overallStructure.imports = [];
     }
   }
-  
+
   // Ensure generalIssues exists
   if (!Array.isArray(response.generalIssues)) {
     response.generalIssues = [];
   }
-  
+
   // Validate general issues
   response.generalIssues = (response.generalIssues as Array<{
     type?: string;
@@ -372,11 +372,11 @@ function validateAndRepairReviewMap(response: Record<string, unknown>, code: str
   }>).map((issue) => ({
     type: issue.type || 'general',
     description: issue.description || 'Code quality issue detected',
-    severity: (issue.severity && ['critical', 'high', 'medium', 'low'].includes(issue.severity)) ? 
+    severity: (issue.severity && ['critical', 'high', 'medium', 'low'].includes(issue.severity)) ?
       issue.severity as 'critical' | 'high' | 'medium' | 'low' : 'medium',
     impact: issue.impact || 'May affect code quality and maintainability'
   }));
-  
+
   return response as unknown as CodeReviewMap;
 }
 
@@ -384,7 +384,7 @@ function validateAndRepairReviewMap(response: Record<string, unknown>, code: str
  * Creates a fallback review map when analysis fails.
  */
 function createFallbackReviewMap(code: string, language: string): CodeReviewMap {
-    
+
   // Create a minimal valid review map
   return {
     targetAreas: [],
@@ -405,12 +405,12 @@ function createFallbackReviewMap(code: string, language: string): CodeReviewMap 
 /**
  * Simple function detection for fallback map
  */
-function detectFunctions(code: string, language: string): Array<{name: string, startLine: number, endLine: number}> {
-  const functions: Array<{name: string, startLine: number, endLine: number}> = [];
+function detectFunctions(code: string, language: string): Array<{ name: string, startLine: number, endLine: number }> {
+  const functions: Array<{ name: string, startLine: number, endLine: number }> = [];
   const lines = code.split('\n');
-  
+
   let functionRegex: RegExp;
-  
+
   switch (language) {
     case 'javascript':
     case 'typescript':
@@ -429,17 +429,17 @@ function detectFunctions(code: string, language: string): Array<{name: string, s
     default:
       functionRegex = /\bfunction\s+(\w+)|\bdef\s+(\w+)/;
   }
-  
+
   for (let i = 0; i < lines.length; i++) {
     const match = lines[i].match(functionRegex);
     if (match) {
       // Find the first non-null capturing group as the function name
       const name = match.slice(1).find(m => m) || 'unknown';
-      
+
       // Estimate function end by finding the next function or end of file
       let endLine = i;
       let braceLevel = 0;
-      
+
       for (let j = i + 1; j < lines.length; j++) {
         // Count braces to find function end
         if (lines[j].includes('{')) braceLevel++;
@@ -450,46 +450,46 @@ function detectFunctions(code: string, language: string): Array<{name: string, s
             break;
           }
         }
-        
+
         // For Python, check indentation
         if (language === 'python') {
           const currentIndent = (lines[i].match(/^\s*/) || [''])[0].length;
           const lineIndent = (lines[j].match(/^\s*/) || [''])[0].length;
-          
+
           // If line has content and is at same or lower indentation, function ended
           if (lines[j].trim() !== '' && lineIndent <= currentIndent) {
             endLine = j - 1;
             break;
           }
         }
-        
+
         // If another function starts, end previous function
         if (j !== i && lines[j].match(functionRegex)) {
           endLine = j - 1;
           break;
         }
       }
-      
+
       functions.push({
-        name, 
+        name,
         startLine: i,
         endLine: Math.max(endLine, i + 1) // Ensure at least one line
       });
     }
   }
-  
+
   return functions;
 }
 
 /**
  * Simple class detection for fallback map
  */
-function detectClasses(code: string, language: string): Array<{name: string, startLine: number, endLine: number}> {
-  const classes: Array<{name: string, startLine: number, endLine: number}> = [];
+function detectClasses(code: string, language: string): Array<{ name: string, startLine: number, endLine: number }> {
+  const classes: Array<{ name: string, startLine: number, endLine: number }> = [];
   const lines = code.split('\n');
-  
+
   let classRegex: RegExp;
-  
+
   switch (language) {
     case 'javascript':
     case 'typescript':
@@ -508,16 +508,16 @@ function detectClasses(code: string, language: string): Array<{name: string, sta
     default:
       classRegex = /\bclass\s+(\w+)/;
   }
-  
+
   for (let i = 0; i < lines.length; i++) {
     const match = lines[i].match(classRegex);
     if (match) {
       const name = match[1];
-      
+
       // Estimate class end by finding the next class or end of file
       let endLine = i;
       let braceLevel = 0;
-      
+
       for (let j = i + 1; j < lines.length; j++) {
         // Count braces to find class end
         if (lines[j].includes('{')) braceLevel++;
@@ -528,34 +528,34 @@ function detectClasses(code: string, language: string): Array<{name: string, sta
             break;
           }
         }
-        
+
         // For Python, check indentation
         if (language === 'python') {
           const currentIndent = (lines[i].match(/^\s*/) || [''])[0].length;
           const lineIndent = (lines[j].match(/^\s*/) || [''])[0].length;
-          
+
           // If line has content and is at same or lower indentation, class ended
           if (lines[j].trim() !== '' && lineIndent <= currentIndent) {
             endLine = j - 1;
             break;
           }
         }
-        
+
         // If another class starts, end previous class
         if (j !== i && lines[j].match(classRegex)) {
           endLine = j - 1;
           break;
         }
       }
-      
+
       classes.push({
-        name, 
+        name,
         startLine: i,
         endLine: Math.max(endLine, i + 5) // Ensure at least a few lines
       });
     }
   }
-  
+
   return classes;
 }
 
@@ -565,9 +565,9 @@ function detectClasses(code: string, language: string): Array<{name: string, sta
 function detectImports(code: string, language: string): string[] {
   const imports: string[] = [];
   const lines = code.split('\n');
-  
+
   let importRegex: RegExp;
-  
+
   switch (language) {
     case 'javascript':
     case 'typescript':
@@ -591,13 +591,13 @@ function detectImports(code: string, language: string): string[] {
     default:
       importRegex = /\b(import|require|using|#include)\b/;
   }
-  
+
   for (const line of lines) {
     if (importRegex.test(line)) {
       imports.push(line.trim());
     }
   }
-  
+
   return imports;
 }
 
@@ -611,13 +611,13 @@ function detectImports(code: string, language: string): string[] {
  * @returns Formatted prompt for code review
  */
 function createCodeReviewPrompt(
-  code: string, 
-  language: string, 
+  code: string,
+  language: string,
   options: CodeReviewOptions = {}
 ): string {
   const { reviewFocus, chunkContext, isPartialReview, reviewMap } = options;
   const focusAreas = [];
-  
+
   if (!reviewFocus || reviewFocus.cleanCode) {
     focusAreas.push(
       "Meaningful Names (clear, intention-revealing variable and function names)",
@@ -628,7 +628,7 @@ function createCodeReviewPrompt(
       "Simplicity (DRY principle, reduced complexity, no dead code)"
     );
   }
-    
+
   if (reviewFocus?.performance) {
     focusAreas.push(
       "Algorithm Efficiency (optimal algorithms and Big O complexity)",
@@ -639,7 +639,7 @@ function createCodeReviewPrompt(
       "Caching and Memoization (reusing computed results)"
     );
   }
-    
+
   if (reviewFocus?.security) {
     focusAreas.push(
       "Input Validation (sanitizing and validating all inputs)",
@@ -672,16 +672,16 @@ ${chunkContext ? `CHUNK CONTEXT: ${chunkContext}\n` : ''}`;
       .filter(area => isAreaRelevantToChunk(area, code, options))
       .map(area => `- Lines ${area.startLine}-${area.endLine}: ${area.description} (${area.cleanCodePrinciple})`)
       .join('\n');
-    
+
     // Format the overall structure
     const functions = reviewMap.overallStructure.functions
       .map(func => `- ${func.name}: Lines ${func.startLine}-${func.endLine}`)
       .join('\n');
-    
+
     const classes = reviewMap.overallStructure.classes
       .map(cls => `- ${cls.name}: Lines ${cls.startLine}-${cls.endLine}`)
       .join('\n');
-    
+
     // Add the context
     if (targetAreas || functions || classes) {
       analysisContext = `
@@ -695,10 +695,16 @@ ${classes ? `Classes:\n${classes}\n` : ''}`;
   return `
 You are an expert senior software engineer conducting a code review for a junior developer. Your mission is to provide actionable feedback organized by clean code principles.
 
+BE EXTREMELY CRITICAL: Find every possible issue, no matter how small. Be pedantic and strict about best practices.
+BE EXHAUSTIVE: Find as many issues as possible, even in code that appears correct at first glance.
+BE CRITICAL: Do not hold back - identify every possible improvement, no matter how small.
+QUANTITY MATTERS: I expect you to find at least 5-10 substantial issues in any code of moderate length.
+QUALITY MATTERS: Provide detailed explanations and significant improvements, not just style tweaks.
+
 ${chunkInstructions}
 ${analysisContext}
 
-REVIEW THIS ${language.toUpperCase()} CODE:
+REVIEW THIS ${language.toUpperCase()} CODE WITH EXTREME SCRUTINY:
 \`\`\`${language}
 ${code}
 \`\`\`
@@ -774,21 +780,21 @@ function isAreaRelevantToChunk(
   if (!options.isPartialReview) {
     return true;
   }
-  
+
   // If no chunk metadata, can't determine relevance
   if (!options.chunkContext) {
     return true;
   }
-  
+
   // Extract chunk lines from context
   const lineMatch = options.chunkContext.match(/lines (\d+)-(\d+)/i);
   if (!lineMatch) {
     return true;
   }
-  
+
   const chunkStart = parseInt(lineMatch[1], 10);
   const chunkEnd = parseInt(lineMatch[2], 10);
-  
+
   // Check if there's overlap between the area and the chunk
   return (area.startLine <= chunkEnd && area.endLine >= chunkStart);
 }
@@ -803,22 +809,22 @@ function validateReviewQuality(response: CodeReviewResponse): boolean {
   if (!response.summary || !response.improvedCode) {
     return false;
   }
-  
+
   // Check if the improved code is different from the original
   if (response.improvedCode.trim().length === 0) {
     return false;
   }
-  
+
   // Check for at least some valid feedback
-  const hasIssuesOrSuggestions = 
+  const hasIssuesOrSuggestions =
     (Array.isArray(response.issues) && response.issues.length > 0) ||
     (Array.isArray(response.suggestions) && response.suggestions.length > 0) ||
     (Array.isArray(response.codeSections) && response.codeSections.some(s => s.type === 'changed'));
-  
+
   if (!hasIssuesOrSuggestions) {
     return false;
   }
-  
+
   return true;
 }
 
@@ -832,17 +838,17 @@ function parseReviewResponse(responseText: string): CodeReviewResponse {
   try {
     // First attempt: try to parse the entire response as JSON
     const parsed = JSON.parse(responseText);
-    
+
     // Ensure codeSections exist or generate them if they don't
     if (!parsed.codeSections && parsed.suggestions && parsed.suggestions.length > 0) {
       parsed.codeSections = generateCodeSectionsFromSuggestions(parsed.suggestions);
     }
-    
+
     // Ensure cleanCodePrinciples exists
     if (!parsed.cleanCodePrinciples && parsed.codeSections) {
       parsed.cleanCodePrinciples = generatePrinciplesFromSections(parsed.codeSections);
     }
-    
+
     return parsed;
   } catch {
     // Second attempt: look for JSON object in the response
@@ -854,23 +860,23 @@ function parseReviewResponse(responseText: string): CodeReviewResponse {
         for (const match of jsonMatch) {
           try {
             const parsed = JSON.parse(match);
-            
+
             // Process the parsed response to add missing sections if needed
             if (!parsed.codeSections && parsed.suggestions && parsed.suggestions.length > 0) {
               parsed.codeSections = generateCodeSectionsFromSuggestions(parsed.suggestions);
             }
-            
+
             if (!parsed.cleanCodePrinciples && parsed.codeSections) {
               parsed.cleanCodePrinciples = generatePrinciplesFromSections(parsed.codeSections);
             }
-            
+
             return parsed;
           } catch {
             // Continue to next match
           }
         }
       }
-      
+
       // Third attempt: try to find JSON with relaxed regex
       const relaxedMatch = responseText.match(/\{[\s\S]*"summary"[\s\S]*"issues"[\s\S]*\}/);
       if (relaxedMatch) {
@@ -880,7 +886,7 @@ function parseReviewResponse(responseText: string): CodeReviewResponse {
           // Continue to more aggressive parsing
         }
       }
-      
+
       // Fourth attempt: aggressive JSON repair
       return repairAndParseJSON(responseText);
     } catch (nestedError) {
@@ -894,10 +900,10 @@ function parseReviewResponse(responseText: string): CodeReviewResponse {
  * Helper function to generate code sections from suggestions
  */
 function generateCodeSectionsFromSuggestions(
-  suggestions: Array<{description: string; before: string; after: string; benefits?: string}>
+  suggestions: Array<{ description: string; before: string; after: string; benefits?: string }>
 ): CodeChangeSection[] {
   const sections: CodeChangeSection[] = [];
-  
+
   suggestions.forEach((suggestion, index) => {
     sections.push({
       id: `generated-section-${index}`,
@@ -908,22 +914,22 @@ function generateCodeSectionsFromSuggestions(
       cleanCodePrinciple: getCategoryFromDescription(suggestion.description)
     });
   });
-  
+
   return sections;
 }
 
 /**
  * Helper function to generate clean code principles count from sections
  */
-function generatePrinciplesFromSections(codeSections: CodeChangeSection[]): {[key: string]: number} {
-  const principles: {[key: string]: number} = {};
-  
+function generatePrinciplesFromSections(codeSections: CodeChangeSection[]): { [key: string]: number } {
+  const principles: { [key: string]: number } = {};
+
   codeSections.forEach(section => {
     if (section.type === 'changed' && section.cleanCodePrinciple) {
       principles[section.cleanCodePrinciple] = (principles[section.cleanCodePrinciple] || 0) + 1;
     }
   });
-  
+
   return principles;
 }
 
@@ -932,7 +938,7 @@ function generatePrinciplesFromSections(codeSections: CodeChangeSection[]): {[ke
  */
 function getCategoryFromDescription(description: string): string {
   // Map common terms to clean code principles
-  const termToPrinciple: {[key: string]: string} = {
+  const termToPrinciple: { [key: string]: string } = {
     'variable': 'Meaningful Names',
     'name': 'Meaningful Names',
     'naming': 'Meaningful Names',
@@ -958,7 +964,7 @@ function getCategoryFromDescription(description: string): string {
     'vulnerability': 'Security',
     'sanitiz': 'Security'
   };
-  
+
   // Check description for matching terms
   const lowerDescription = description.toLowerCase();
   for (const [term, principle] of Object.entries(termToPrinciple)) {
@@ -966,7 +972,7 @@ function getCategoryFromDescription(description: string): string {
       return principle;
     }
   }
-  
+
   // Default category
   return 'Code Improvement';
 }
@@ -980,7 +986,7 @@ function repairAndParseJSON(text: string): CodeReviewResponse {
   // Extract key components that should be in the response
   const summaryMatch = text.match(/"summary"\s*:\s*"([^"]*)"/);
   const summary = summaryMatch ? summaryMatch[1] : "Unable to parse summary";
-  
+
   // Create a minimal valid response
   const fallbackResponse: CodeReviewResponse = {
     summary,
@@ -998,7 +1004,7 @@ function repairAndParseJSON(text: string): CodeReviewResponse {
     }],
     improvedCode: "" // Will be filled with original code by caller
   };
-  
+
   // Try to extract issues array
   try {
     const issuesMatch = text.match(/"issues"\s*:\s*(\[[\s\S]*?\])/);
@@ -1012,7 +1018,7 @@ function repairAndParseJSON(text: string): CodeReviewResponse {
   } catch {
     // Keep default issues
   }
-  
+
   // Try to extract suggestions array
   try {
     const suggestionsMatch = text.match(/"suggestions"\s*:\s*(\[[\s\S]*?\])/);
@@ -1021,7 +1027,7 @@ function repairAndParseJSON(text: string): CodeReviewResponse {
       const suggestions = JSON.parse(suggestionsJson);
       if (Array.isArray(suggestions)) {
         fallbackResponse.suggestions = suggestions;
-        
+
         // Generate code sections from suggestions
         fallbackResponse.codeSections = generateCodeSectionsFromSuggestions(suggestions);
       }
@@ -1029,7 +1035,7 @@ function repairAndParseJSON(text: string): CodeReviewResponse {
   } catch {
     // Keep default suggestions
   }
-  
+
   // Try to extract code sections array
   try {
     const codeSectionsMatch = text.match(/"codeSections"\s*:\s*(\[[\s\S]*?\])/);
@@ -1043,7 +1049,7 @@ function repairAndParseJSON(text: string): CodeReviewResponse {
   } catch {
     // Keep default code sections
   }
-  
+
   // Try to extract improved code
   try {
     // This is tricky because the code itself might contain quotes and special chars
@@ -1060,7 +1066,7 @@ function repairAndParseJSON(text: string): CodeReviewResponse {
   } catch {
     // Keep empty improved code
   }
-  
+
   return fallbackResponse;
 }
 
@@ -1074,7 +1080,7 @@ function repairAndParseJSON(text: string): CodeReviewResponse {
  * @returns Structured code review response
  */
 export async function reviewCode(
-  code: string, 
+  code: string,
   language: string,
   options: CodeReviewOptions = {}
 ): Promise<CodeReviewResponse> {
@@ -1088,41 +1094,41 @@ export async function reviewCode(
       // Continue without preliminary analysis
     }
   }
-  
+
   // Add the review map to options
   const enhancedOptions = {
     ...options,
     reviewMap
   };
-  
+
   const { model } = initGeminiApi();
   const prompt = createCodeReviewPrompt(code, language, enhancedOptions);
   const maxRetries = options.maxRetries || 1;
-  
+
   let attempts = 0;
   let lastError: Error | null = null;
-  
+
   while (attempts < maxRetries + 1) { // +1 for the initial attempt
     try {
       const chatSession = model.startChat({
         history: [],
       });
-      
+
       const result = await chatSession.sendMessage(prompt);
       const responseText = result.response.text();
-      
+
       try {
         // Parse the response
         const response = parseReviewResponse(responseText);
-        
+
         // Ensure improvedCode is populated
         if (!response.improvedCode || response.improvedCode.trim().length === 0) {
           response.improvedCode = code;
         }
-        
+
         // Add the review map for context
         response.reviewMap = reviewMap;
-        
+
         // Add chunk metadata if this is a partial review
         if (options.isPartialReview && options.chunkContext) {
           // Extract original line information from context if available
@@ -1134,7 +1140,7 @@ export async function reviewCode(
             originalLineEnd: lineMatch ? parseInt(lineMatch[2], 10) : 0
           };
         }
-        
+
         // Validate the quality of the review
         if (!validateReviewQuality(response)) {
           if (attempts < maxRetries) {
@@ -1145,12 +1151,12 @@ export async function reviewCode(
             return await repairReview(chatSession, code, enhancedOptions);
           }
         }
-        
+
         return response;
       } catch (parseError) {
         console.error('Error parsing JSON response:', parseError);
         lastError = parseError instanceof Error ? parseError : new Error(String(parseError));
-        
+
         if (attempts < maxRetries) {
           attempts++;
           continue; // Try again
@@ -1161,7 +1167,7 @@ export async function reviewCode(
     } catch (apiError) {
       console.error(`Attempt ${attempts + 1} error calling Gemini API:`, apiError);
       lastError = apiError instanceof Error ? apiError : new Error(String(apiError));
-      
+
       if (attempts < maxRetries) {
         attempts++;
         // Exponential backoff
@@ -1172,7 +1178,7 @@ export async function reviewCode(
       }
     }
   }
-  
+
   // This should never be reached due to the throw in the catch block
   throw new Error(`Failed to get code review: ${lastError?.message}`);
 }
@@ -1185,7 +1191,7 @@ export async function reviewCode(
  * @returns Structured code review response
  */
 async function repairReview(
-  chatSession: ChatSession, 
+  chatSession: ChatSession,
   code: string,
   options: CodeReviewOptions = {}
 ): Promise<CodeReviewResponse> {
@@ -1239,15 +1245,15 @@ IMPORTANT RULES:
   try {
     const result = await chatSession.sendMessage(retryPrompt);
     const responseText = result.response.text();
-    
+
     try {
       const response = parseReviewResponse(responseText);
-      
+
       // Ensure improvedCode is populated
       if (!response.improvedCode || response.improvedCode.trim().length === 0) {
         response.improvedCode = code;
       }
-      
+
       // Add chunk metadata if this is a partial review
       if (options.isPartialReview && options.chunkContext) {
         const lineMatch = options.chunkContext.match(/lines (\d+)-(\d+)/i);
@@ -1258,14 +1264,14 @@ IMPORTANT RULES:
           originalLineEnd: lineMatch ? parseInt(lineMatch[2], 10) : 0
         };
       }
-      
+
       // Add review map
       response.reviewMap = options.reviewMap;
-      
+
       return response;
     } catch (parseError) {
       console.error('Error parsing JSON in retry response:', parseError);
-      
+
       // One more attempt with even stricter instructions
       return await lastChanceReview(chatSession, code, options);
     }
@@ -1283,7 +1289,7 @@ IMPORTANT RULES:
  * @returns Structured code review response
  */
 async function lastChanceReview(
-  chatSession: ChatSession, 
+  chatSession: ChatSession,
   code: string,
   options: CodeReviewOptions = {}
 ): Promise<CodeReviewResponse> {
@@ -1317,15 +1323,15 @@ Double-check that your response contains ONLY this JSON object with no additiona
   try {
     const result = await chatSession.sendMessage(finalAttemptPrompt);
     const responseText = result.response.text();
-    
+
     try {
       const response = parseReviewResponse(responseText);
-      
+
       // Ensure improvedCode is populated
       if (!response.improvedCode || response.improvedCode.trim().length === 0) {
         response.improvedCode = code;
       }
-      
+
       // Add chunk metadata if this is a partial review
       if (options.isPartialReview && options.chunkContext) {
         const lineMatch = options.chunkContext.match(/lines (\d+)-(\d+)/i);
@@ -1336,10 +1342,10 @@ Double-check that your response contains ONLY this JSON object with no additiona
           originalLineEnd: lineMatch ? parseInt(lineMatch[2], 10) : 0
         };
       }
-      
+
       // Add review map
       response.reviewMap = options.reviewMap;
-      
+
       return response;
     } catch (finalError) {
       console.error('Final attempt failed to parse JSON:', finalError);
@@ -1399,7 +1405,7 @@ function createFallbackResponse(
     },
     reviewMap: options.reviewMap
   };
-  
+
   // Add chunk metadata if this is a partial review
   if (options.isPartialReview && options.chunkContext) {
     const lineMatch = options.chunkContext.match(/lines (\d+)-(\d+)/i);
@@ -1410,7 +1416,7 @@ function createFallbackResponse(
       originalLineEnd: lineMatch ? parseInt(lineMatch[2], 10) : 0
     };
   }
-  
+
   return response;
 }
 
@@ -1428,7 +1434,7 @@ export async function reviewCodeChunk(
 ): Promise<CodeReviewResponse> {
   // Create chunk-specific context
   let chunkContext = `Chunk ID: ${chunk.id}, lines ${chunk.startLine}-${chunk.endLine}`;
-  
+
   if (chunk.context) {
     if (chunk.context.imports && chunk.context.imports.length > 0) {
       chunkContext += `\nImports: ${chunk.context.imports.join(', ')}`;
@@ -1440,11 +1446,11 @@ export async function reviewCodeChunk(
       chunkContext += `\nDependencies: ${chunk.context.dependencies.join(', ')}`;
     }
   }
-  
+
   if (chunk.metadata) {
     chunkContext += `\nMetadata: ${JSON.stringify(chunk.metadata)}`;
   }
-  
+
   // Perform the review with chunk context
   return reviewCode(chunk.code, chunk.language, {
     ...options,
@@ -1478,19 +1484,19 @@ export async function reviewCodeStream(
       // Continue without preliminary analysis
     }
   }
-  
+
   // Add review map to options
   const enhancedOptions = {
     ...options,
     reviewMap
   };
-  
+
   const { model } = initGeminiApi();
   const prompt = createCodeReviewPrompt(code, language, enhancedOptions);
-  
+
   // Create encoder for text encoding
   const encoder = new TextEncoder();
-  
+
   // Initialize response structure with placeholders
   const initialResponse: Partial<CodeReviewResponse> = {
     summary: "",
@@ -1505,40 +1511,40 @@ export async function reviewCodeStream(
       timeSaved: ""
     }
   };
-  
+
   // Create a stream for the response
   return new ReadableStream({
     async start(controller) {
       try {
         // Send initial state event
         controller.enqueue(encoder.encode(`event: state\ndata: ${JSON.stringify({ status: 'analyzing', progress: 0 })}\n\n`));
-        
+
         // If we have a review map from preliminary analysis, send it
         if (reviewMap) {
-          controller.enqueue(encoder.encode(`event: state\ndata: ${JSON.stringify({ 
-            status: 'analyzing', 
+          controller.enqueue(encoder.encode(`event: state\ndata: ${JSON.stringify({
+            status: 'analyzing',
             progress: 5,
-            message: 'Preliminary analysis completed. Starting detailed review...' 
+            message: 'Preliminary analysis completed. Starting detailed review...'
           })}\n\n`));
         }
-        
+
         // Initialize Gemini chat session
         const chatSession = model.startChat({ history: [] });
-        
+
         // Start streaming response from Gemini
         const streamResult = await chatSession.sendMessageStream(prompt);
-        
+
         // Track accumulated text for JSON parsing
         let accumulatedText = "";
         let currentResponse = { ...initialResponse };
         const lastSent = { ...initialResponse };
         let progress = 10; // Start at 10% after initialization
-        
+
         // Process each chunk as it arrives
         for await (const chunk of streamResult.stream) {
           const chunkText = chunk.text();
           accumulatedText += chunkText;
-          
+
           try {
             // Try to find and parse JSON in the accumulated text
             const jsonMatch = accumulatedText.match(/\{[\s\S]*\}/);
@@ -1547,22 +1553,22 @@ export async function reviewCodeStream(
               try {
                 // Attempt to parse the JSON
                 const parsedJson = JSON.parse(potentialJson);
-                
+
                 // Update current response with parsed data
                 currentResponse = { ...currentResponse, ...parsedJson };
-                
+
                 // Calculate progress
                 progress = Math.min(90, progress + 5); // Cap at 90% until complete
-                
+
                 // Determine what parts have been updated
                 const updates: Record<string, unknown> = {};
-                
+
                 // Check each key to see what's changed since last sent
                 for (const key of Object.keys(currentResponse) as Array<keyof typeof currentResponse>) {
                   if (key && currentResponse[key] !== lastSent[key as keyof typeof lastSent]) {
-                    if (Array.isArray(currentResponse[key]) && 
-                        Array.isArray(lastSent[key as keyof typeof lastSent]) && 
-                        (currentResponse[key] as unknown[]).length > (lastSent[key as keyof typeof lastSent] as unknown[]).length) {
+                    if (Array.isArray(currentResponse[key]) &&
+                      Array.isArray(lastSent[key as keyof typeof lastSent]) &&
+                      (currentResponse[key] as unknown[]).length > (lastSent[key as keyof typeof lastSent] as unknown[]).length) {
                       // For arrays, send only if there are new items
                       updates[key] = currentResponse[key];
                       const typedKey = key as keyof typeof lastSent;
@@ -1575,10 +1581,10 @@ export async function reviewCodeStream(
                     }
                   }
                 }
-                
+
                 // Send progress update
                 controller.enqueue(encoder.encode(`event: state\ndata: ${JSON.stringify({ status: 'analyzing', progress })}\n\n`));
-                
+
                 // Send partial response if there are updates
                 if (Object.keys(updates).length > 0) {
                   controller.enqueue(encoder.encode(`event: update\ndata: ${JSON.stringify(updates)}\n\n`));
@@ -1591,33 +1597,33 @@ export async function reviewCodeStream(
             // Continue despite errors in partial parsing
           }
         }
-        
+
         // Get the final complete response text
         const response = await streamResult.response;
         const responseText = response.text();
-        
+
         try {
           // Parse the complete response
           const finalResponse = parseReviewResponse(responseText);
-          
+
           // Ensure improvedCode is populated
           if (!finalResponse.improvedCode || finalResponse.improvedCode.trim().length === 0) {
             finalResponse.improvedCode = code;
           }
-          
+
           // Add review map to response
           finalResponse.reviewMap = reviewMap;
-          
+
           // Ensure codeSections exist
           if (!finalResponse.codeSections && finalResponse.suggestions) {
             finalResponse.codeSections = generateCodeSectionsFromSuggestions(finalResponse.suggestions);
           }
-          
+
           // Validate the quality of the review and retry if needed
-          const validatedResponse = validateReviewQuality(finalResponse) 
-            ? finalResponse 
+          const validatedResponse = validateReviewQuality(finalResponse)
+            ? finalResponse
             : await repairReview(chatSession, code, enhancedOptions);
-          
+
           // Send completion event with full response
           controller.enqueue(encoder.encode(`event: state\ndata: ${JSON.stringify({ status: 'completed', progress: 100 })}\n\n`));
           controller.enqueue(encoder.encode(`event: complete\ndata: ${JSON.stringify(validatedResponse)}\n\n`));
@@ -1625,29 +1631,29 @@ export async function reviewCodeStream(
           // If parsing fails at the end, try the retry mechanisms
           console.error('Error parsing final JSON response:', error);
           const retryResponse = await repairReview(chatSession, code, enhancedOptions);
-          
+
           // Send the retry response
           controller.enqueue(encoder.encode(`event: state\ndata: ${JSON.stringify({ status: 'completed', progress: 100 })}\n\n`));
           controller.enqueue(encoder.encode(`event: complete\ndata: ${JSON.stringify(retryResponse)}\n\n`));
         }
-        
+
         // Close the stream
         controller.close();
       } catch (error) {
         // Handle errors
         console.error('Streaming error:', error);
-        
+
         // Create fallback response
         const fallbackResponse = createFallbackResponse(code, enhancedOptions);
-        
+
         // Send error event
-        controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({ 
-          message: error instanceof Error ? error.message : 'Unknown error during code review' 
+        controller.enqueue(encoder.encode(`event: error\ndata: ${JSON.stringify({
+          message: error instanceof Error ? error.message : 'Unknown error during code review'
         })}\n\n`));
-        
+
         // Send fallback response
         controller.enqueue(encoder.encode(`event: complete\ndata: ${JSON.stringify(fallbackResponse)}\n\n`));
-        
+
         // Close the stream
         controller.close();
       }
