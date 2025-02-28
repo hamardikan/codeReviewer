@@ -5,9 +5,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import MainLayout from '@/components/layout/MainLayout';
 import CodeEditor from '@/components/CodeEditor';
 import ReviewDisplay from '@/components/ReviewDisplay';
+import IssueSelection from '@/components/IssueSelection';
 import { ThemeProvider } from '@/contexts/ThemeContext';
 import { saveReview, isLocalStorageAvailable } from '@/lib/localStorage';
-import { CodeReviewResponse } from '@/lib/gemini';
+import { CodeReviewResponse, CodeIssueDetectionResponse, CodeImplementationResponse } from '@/lib/gemini';
 import Toast, { ToastType } from '@/components/Toast';
 
 interface ReviewFocus {
@@ -17,7 +18,7 @@ interface ReviewFocus {
 }
 
 interface ReviewProgressState {
-  status: 'idle' | 'chunking' | 'analyzing' | 'processing' | 'aggregating' | 'completed' | 'error';
+  status: 'idle' | 'chunking' | 'detecting' | 'detected' | 'implementing' | 'implemented' | 'error';
   progress: number;
   message?: string;
   chunkInfo?: {
@@ -30,7 +31,8 @@ export default function HomePage() {
   const [code, setCode] = useState('');
   const [language, setLanguage] = useState('javascript');
   const [reviewResult, setReviewResult] = useState<CodeReviewResponse | null>(null);
-  const [partialIssues, setPartialIssues] = useState<CodeReviewResponse['issues']>([]);
+  const [detectionResult, setDetectionResult] = useState<CodeIssueDetectionResponse | null>(null);
+  const [partialIssues, setPartialIssues] = useState<CodeIssueDetectionResponse['issues']>([]);
   const [error, setError] = useState<string | null>(null);
   const [reviewProgress, setReviewProgress] = useState<ReviewProgressState>({
     status: 'idle',
@@ -42,23 +44,36 @@ export default function HomePage() {
     performance: false,
     security: false,
   });
+  // Two-phase review state
+  const [currentPhase, setCurrentPhase] = useState<'input' | 'detection' | 'selection' | 'implementation' | 'complete'>('input');
   
   // Use a ref to track the abort controller for cancellation
   const abortControllerRef = useRef<AbortController | null>(null);
   
   // Check if code is empty
   const isCodeEmpty = code.trim() === '';
-  const isReviewing = ['chunking', 'analyzing', 'processing', 'aggregating'].includes(reviewProgress.status);
-  const isChunkedProcessing = reviewProgress.status === 'processing' && reviewProgress.chunkInfo;
+  const isReviewing = ['chunking', 'detecting', 'implementing'].includes(reviewProgress.status);
+  const isChunkedProcessing = (reviewProgress.status === 'detecting' || reviewProgress.status === 'implementing') && reviewProgress.chunkInfo;
   
   // Helper function to generate progress messages based on percentage
-  const getProgressMessage = (progress: number): string => {
-    if (progress < 15) return 'Starting code review...';
-    if (progress < 25) return 'Analyzing code structure...';
-    if (progress < 50) return 'Identifying potential issues...';
-    if (progress < 75) return 'Evaluating code quality...';
-    if (progress < 90) return 'Generating improvement suggestions...';
-    return 'Finalizing review...';
+  const getProgressMessage = (progress: number, status: string): string => {
+    if (status === 'detecting') {
+      if (progress < 15) return 'Starting code analysis...';
+      if (progress < 25) return 'Analyzing code structure...';
+      if (progress < 50) return 'Identifying potential issues...';
+      if (progress < 75) return 'Evaluating code quality...';
+      if (progress < 90) return 'Finalizing analysis...';
+      return 'Preparing results...';
+    } else if (status === 'implementing') {
+      if (progress < 15) return 'Preparing to implement changes...';
+      if (progress < 30) return 'Planning code modifications...';
+      if (progress < 60) return 'Applying approved changes...';
+      if (progress < 80) return 'Verifying code integrity...';
+      if (progress < 95) return 'Finalizing implementation...';
+      return 'Completing review...';
+    }
+    
+    return 'Processing...';
   };
 
   // Cleanup on unmount
@@ -70,14 +85,15 @@ export default function HomePage() {
     };
   }, []);
   
-  // Handle code review submission
-  const handleReviewCode = async () => {
+  // Handle phase 1: code issue detection
+  const handleDetectIssues = async () => {
     if (isCodeEmpty) {
       setError('Please enter some code to review.');
       return;
     }
 
     // Reset previous results and errors
+    setDetectionResult(null);
     setReviewResult(null);
     setPartialIssues([]);
     setError(null);
@@ -91,14 +107,16 @@ export default function HomePage() {
     const abortController = new AbortController();
     abortControllerRef.current = abortController;
     
+    // Update phase and progress
+    setCurrentPhase('detection');
     setReviewProgress({
-      status: 'analyzing',
+      status: 'detecting',
       progress: 5,
-      message: 'Starting code review...'
+      message: 'Starting code analysis...'
     });
 
     try {
-      // Start the review as a streaming process
+      // Start the detection as a streaming process
       const response = await fetch('/api/review', {
         method: 'POST',
         headers: {
@@ -108,6 +126,7 @@ export default function HomePage() {
           code,
           language,
           reviewFocus,
+          phase: 'detection' // Specify detection phase
         }),
         signal: abortController.signal
       });
@@ -123,15 +142,6 @@ export default function HomePage() {
       // Process the stream
       const reader = response.body.getReader();
       const decoder = new TextDecoder();
-      
-      // Initialize a partial result object
-      let partialResult: Partial<CodeReviewResponse> = {
-        summary: "",
-        issues: [],
-        suggestions: [],
-        improvedCode: "",
-        learningResources: []
-      };
       
       let buffer = '';
 
@@ -166,7 +176,7 @@ export default function HomePage() {
                 case 'state':
                   // Extract chunk info if available
                   let chunkInfo = undefined;
-                  if (parsedData.status === 'processing' && 
+                  if (parsedData.status === 'detecting' && 
                       parsedData.processed !== undefined && 
                       parsedData.total !== undefined) {
                     chunkInfo = {
@@ -178,18 +188,12 @@ export default function HomePage() {
                   setReviewProgress({
                     status: parsedData.status,
                     progress: parsedData.progress || 0,
-                    message: parsedData.message || getProgressMessage(parsedData.progress || 0),
+                    message: parsedData.message || getProgressMessage(parsedData.progress || 0, parsedData.status),
                     chunkInfo
                   });
                   break;
                   
                 case 'update':
-                  // Update our partial result with the new data
-                  partialResult = {
-                    ...partialResult,
-                    ...parsedData
-                  };
-                  
                   // Handle partial issues separately
                   if (parsedData.partialIssues && Array.isArray(parsedData.partialIssues)) {
                     setPartialIssues(prev => {
@@ -205,37 +209,33 @@ export default function HomePage() {
                       return newIssues;
                     });
                   }
-                  
-                  // If we have enough data to display something meaningful, update the UI
-                  if (partialResult.summary && partialResult.issues && partialResult.issues.length > 0) {
-                    setReviewResult({
-                      summary: partialResult.summary || "",
-                      issues: partialResult.issues || [],
-                      suggestions: partialResult.suggestions || [],
-                      improvedCode: partialResult.improvedCode || code,
-                      learningResources: partialResult.learningResources || [],
-                      seniorReviewTime: partialResult.seniorReviewTime
-                    } as CodeReviewResponse);
-                  }
                   break;
                   
-                case 'complete':
-                  setReviewResult(parsedData);
+                case 'detection':
+                  // Process the detection result
+                  setDetectionResult(parsedData);
                   setReviewProgress({
-                    status: 'completed',
+                    status: 'detected',
                     progress: 100
                   });
                   
-                  // Save to localStorage
-                  if (isLocalStorageAvailable()) {
-                    saveReview(code, language, parsedData);
-                    window.dispatchEvent(new Event('reviewsUpdated'));
-                  }
+                  // Also set an initial review result for display purposes
+                  setReviewResult({
+                    phase: 'detection',
+                    summary: parsedData.summary,
+                    issues: parsedData.issues,
+                    suggestions: [],  // No suggestions yet until implementation phase
+                    improvedCode: code,  // Original code for now
+                    codeQualityScore: parsedData.codeQualityScore
+                  });
                   
                   setToast({
-                    message: 'Code review completed!',
+                    message: 'Code analysis completed!',
                     type: 'success'
                   });
+                  
+                  // Move to selection phase
+                  setCurrentPhase('selection');
                   break;
                   
                 case 'error':
@@ -254,6 +254,128 @@ export default function HomePage() {
       // Clear the abort controller reference now that we're done
       abortControllerRef.current = null;
       
+    } catch (err) {
+      // Don't treat aborted requests as errors
+      if (err instanceof Error && err.name === 'AbortError') {
+        console.log('Request was cancelled');
+        return;
+      }
+      
+      handleReviewError(err);
+    }
+  };
+  
+  // Handle phase 2: implement selected changes
+  const handleImplementChanges = async (approvedIssues: string[], seniorFeedback: Record<string, string>) => {
+    if (!detectionResult) {
+      setError('No detection results available.');
+      return;
+    }
+    
+    // Get the full issue data for approved issues
+    const approvedIssueData = detectionResult.issues.filter(issue => 
+      approvedIssues.includes(issue.id)
+    );
+    
+    // Update phase and progress
+    setCurrentPhase('implementation');
+    setReviewProgress({
+      status: 'implementing',
+      progress: 5,
+      message: 'Starting implementation of approved changes...'
+    });
+    
+    // Cancel any ongoing review
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    
+    // Create a new abort controller
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+    
+    try {
+      // Call the implementation API with the approved issue data
+      const response = await fetch('/api/implement', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          code,
+          language,
+          reviewFocus,
+          approvedIssues,
+          approvedIssueData,
+          seniorFeedback,
+          codeQualityScore: detectionResult.codeQualityScore
+        }),
+        signal: abortController.signal
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error ${response.status}`);
+      }
+
+      // Parse the implementation result
+      const implementationResult = await response.json();
+      
+      // Update progress to 100%
+      setReviewProgress({
+        status: 'implemented',
+        progress: 100,
+        message: 'Implementation complete'
+      });
+      
+      // Create suggestions from the codeChanges
+      const suggestions = implementationResult.codeChanges?.map((change: any) => {
+        // Find the original issue this change applies to
+        const matchingIssue = approvedIssueData.find(issue => issue.id === change.issueId);
+        
+        return {
+          description: matchingIssue?.proposedSolution || 'Applied approved change',
+          before: change.before,
+          after: change.after,
+          benefits: matchingIssue?.impact || 'Improves code quality'
+        };
+      }) || [];
+      
+      // Create combined result for ReviewDisplay
+      const combinedResult: CodeReviewResponse = {
+        phase: 'complete',
+        summary: detectionResult.summary,
+        issues: approvedIssueData,
+        suggestions: suggestions,
+        improvedCode: implementationResult.improvedCode || code,
+        learningResources: (detectionResult as any).learningResources || [],
+        seniorReviewTime: {
+          before: "10 minutes",  // Placeholder values
+          after: "2 minutes",
+          timeSaved: "8 minutes"
+        },
+        codeQualityScore: detectionResult.codeQualityScore
+      };
+      
+      // Set the review result
+      setReviewResult(combinedResult);
+      
+      // Save to localStorage
+      if (isLocalStorageAvailable()) {
+        saveReview(code, language, combinedResult);
+        window.dispatchEvent(new Event('reviewsUpdated'));
+      }
+      
+      // Show success toast
+      setToast({
+        message: 'Implementation completed!',
+        type: 'success'
+      });
+      
+      // Move to complete phase
+      setCurrentPhase('complete');
+      
+      // Clear the abort controller reference
+      abortControllerRef.current = null;
     } catch (err) {
       // Don't treat aborted requests as errors
       if (err instanceof Error && err.name === 'AbortError') {
@@ -304,10 +426,19 @@ export default function HomePage() {
       progress: 0
     });
     
+    // Reset phase
+    setCurrentPhase('input');
+    
     setToast({
       message: 'Code review cancelled',
       type: 'info'
     });
+  };
+  
+  // Handle cancellation from selection phase
+  const handleCancelSelection = () => {
+    setCurrentPhase('input');
+    setDetectionResult(null);
   };
 
   // Render partial issues while processing chunks
@@ -320,7 +451,7 @@ export default function HomePage() {
         <div className="space-y-3 max-h-60 overflow-y-auto">
           {partialIssues.slice(0, 5).map((issue, index) => (
             <div 
-              key={index} 
+              key={`partial-issue-${index}`}
               className="p-3 border-l-4 rounded bg-white dark:bg-gray-700 border-yellow-500 dark:border-yellow-600"
             >
               <div className="font-medium">{issue.type}</div>
@@ -341,7 +472,7 @@ export default function HomePage() {
         </div>
         <div className="mt-2 text-sm text-gray-500 dark:text-gray-400">
           These are preliminary findings from processing chunks of your code.
-          The final review will include prioritized issues and detailed suggestions.
+          The final analysis will include prioritized issues for your review.
         </div>
       </div>
     );
@@ -360,7 +491,7 @@ export default function HomePage() {
         )}
       
         <div className="p-6 max-w-6xl mx-auto">
-          {!reviewResult || (isReviewing) ? (
+          {currentPhase === 'input' || currentPhase === 'detection' ? (
             <div>
               <h1 className="text-2xl font-bold mb-6">New Code Review</h1>
               
@@ -472,7 +603,7 @@ export default function HomePage() {
               
               <div className="mt-6 flex justify-end">
                 <button
-                  onClick={handleReviewCode}
+                  onClick={handleDetectIssues}
                   disabled={isReviewing || isCodeEmpty}
                   className={`
                     px-6 py-3 rounded-lg font-medium
@@ -482,18 +613,79 @@ export default function HomePage() {
                     }
                   `}
                 >
-                  {isReviewing ? 'Reviewing...' : 'Review Code'}
+                  {isReviewing ? 'Analyzing...' : 'Analyze Code'}
                 </button>
               </div>
             </div>
-          ) : (
+          ) : currentPhase === 'selection' && detectionResult ? (
+            <div>
+              <div className="flex justify-between items-center mb-6">
+                <h1 className="text-2xl font-bold">Senior Developer Review</h1>
+                <div className="text-sm text-gray-500">
+                  <span className="px-2 py-1 rounded bg-gray-200 dark:bg-gray-700">
+                    {language}
+                  </span>
+                </div>
+              </div>
+              
+              <IssueSelection
+                detectionResult={detectionResult}
+                onImplement={handleImplementChanges}
+                onCancel={handleCancelSelection}
+                originalCode={code}
+                language={language}
+              />
+            </div>
+          ) : currentPhase === 'implementation' ? (
+            <div>
+              <h1 className="text-2xl font-bold mb-6">Implementing Changes</h1>
+              
+              {/* Progress Indicator */}
+              <div className="mb-10">
+                <div className="flex justify-between items-center mb-2">
+                  <div className="text-sm font-medium">
+                    {reviewProgress.message || 'Implementing approved changes...'}
+                  </div>
+                  <div className="text-sm">
+                    {reviewProgress.progress}%
+                  </div>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-2.5 dark:bg-gray-700">
+                  <div 
+                    className="bg-blue-600 h-2.5 rounded-full transition-all duration-300 ease-out"
+                    style={{ width: `${reviewProgress.progress}%` }}
+                  ></div>
+                </div>
+                
+                {/* Cancel button */}
+                <div className="mt-2 flex justify-end">
+                  <button
+                    onClick={handleCancelReview}
+                    className="text-sm text-gray-600 hover:text-gray-800 dark:text-gray-400 dark:hover:text-gray-200"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+              
+              <div className="flex items-center justify-center h-64">
+                <div className="text-center">
+                  <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500 mx-auto mb-4"></div>
+                  <p className="text-gray-500">Implementing approved changes...</p>
+                  <p className="text-sm text-gray-400 mt-2">This may take a moment</p>
+                </div>
+              </div>
+            </div>
+          ) : currentPhase === 'complete' && reviewResult ? (
             <div>
               <div className="flex justify-between items-center mb-6">
                 <h1 className="text-2xl font-bold">Code Review Results</h1>
                 <div className="flex space-x-3">
                   <button
                     onClick={() => {
+                      setCurrentPhase('input');
                       setReviewResult(null);
+                      setDetectionResult(null);
                       setPartialIssues([]);
                       setReviewProgress({
                         status: 'idle',
@@ -507,15 +699,13 @@ export default function HomePage() {
                 </div>
               </div>
               
-              {reviewResult && (
-                <ReviewDisplay
-                  originalCode={code}
-                  review={reviewResult}
-                  language={language}
-                />
-              )}
+              <ReviewDisplay
+                originalCode={code}
+                review={reviewResult}
+                language={language}
+              />
             </div>
-          )}
+          ) : null}
         </div>
       </MainLayout>
     </ThemeProvider>
