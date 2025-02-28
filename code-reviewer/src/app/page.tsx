@@ -17,15 +17,20 @@ interface ReviewFocus {
 }
 
 interface ReviewProgressState {
-  status: 'idle' | 'analyzing' | 'completed' | 'error';
+  status: 'idle' | 'chunking' | 'analyzing' | 'processing' | 'aggregating' | 'completed' | 'error';
   progress: number;
   message?: string;
+  chunkInfo?: {
+    processed: number;
+    total: number;
+  };
 }
 
 export default function HomePage() {
   const [code, setCode] = useState('');
   const [language, setLanguage] = useState('javascript');
   const [reviewResult, setReviewResult] = useState<CodeReviewResponse | null>(null);
+  const [partialIssues, setPartialIssues] = useState<CodeReviewResponse['issues']>([]);
   const [error, setError] = useState<string | null>(null);
   const [reviewProgress, setReviewProgress] = useState<ReviewProgressState>({
     status: 'idle',
@@ -43,10 +48,12 @@ export default function HomePage() {
   
   // Check if code is empty
   const isCodeEmpty = code.trim() === '';
-  const isReviewing = reviewProgress.status === 'analyzing';
-
+  const isReviewing = ['chunking', 'analyzing', 'processing', 'aggregating'].includes(reviewProgress.status);
+  const isChunkedProcessing = reviewProgress.status === 'processing' && reviewProgress.chunkInfo;
+  
   // Helper function to generate progress messages based on percentage
   const getProgressMessage = (progress: number): string => {
+    if (progress < 15) return 'Starting code review...';
     if (progress < 25) return 'Analyzing code structure...';
     if (progress < 50) return 'Identifying potential issues...';
     if (progress < 75) return 'Evaluating code quality...';
@@ -72,6 +79,7 @@ export default function HomePage() {
 
     // Reset previous results and errors
     setReviewResult(null);
+    setPartialIssues([]);
     setError(null);
     
     // Cancel any ongoing review
@@ -156,10 +164,22 @@ export default function HomePage() {
               // Handle different event types
               switch (eventType) {
                 case 'state':
+                  // Extract chunk info if available
+                  let chunkInfo = undefined;
+                  if (parsedData.status === 'processing' && 
+                      parsedData.processed !== undefined && 
+                      parsedData.total !== undefined) {
+                    chunkInfo = {
+                      processed: parsedData.processed,
+                      total: parsedData.total
+                    };
+                  }
+                  
                   setReviewProgress({
-                    status: parsedData.status === 'completed' ? 'completed' : 'analyzing',
+                    status: parsedData.status,
                     progress: parsedData.progress || 0,
-                    message: parsedData.message || getProgressMessage(parsedData.progress || 0)
+                    message: parsedData.message || getProgressMessage(parsedData.progress || 0),
+                    chunkInfo
                   });
                   break;
                   
@@ -169,6 +189,22 @@ export default function HomePage() {
                     ...partialResult,
                     ...parsedData
                   };
+                  
+                  // Handle partial issues separately
+                  if (parsedData.partialIssues && Array.isArray(parsedData.partialIssues)) {
+                    setPartialIssues(prev => {
+                      // Combine with previous partial issues, avoiding duplicates
+                      const newIssues = [...prev];
+                      for (const issue of parsedData.partialIssues) {
+                        // Simple deduplication based on description
+                        if (!newIssues.some(existingIssue => 
+                          existingIssue.description === issue.description)) {
+                          newIssues.push(issue);
+                        }
+                      }
+                      return newIssues;
+                    });
+                  }
                   
                   // If we have enough data to display something meaningful, update the UI
                   if (partialResult.summary && partialResult.issues && partialResult.issues.length > 0) {
@@ -274,7 +310,43 @@ export default function HomePage() {
     });
   };
 
-  // The rest of your component remains largely the same
+  // Render partial issues while processing chunks
+  const renderPartialIssues = () => {
+    if (partialIssues.length === 0) return null;
+    
+    return (
+      <div className="mt-6 p-4 border rounded-lg bg-gray-50 dark:bg-gray-800 dark:border-gray-700">
+        <h3 className="text-lg font-semibold mb-3">Issues Found So Far ({partialIssues.length})</h3>
+        <div className="space-y-3 max-h-60 overflow-y-auto">
+          {partialIssues.slice(0, 5).map((issue, index) => (
+            <div 
+              key={index} 
+              className="p-3 border-l-4 rounded bg-white dark:bg-gray-700 border-yellow-500 dark:border-yellow-600"
+            >
+              <div className="font-medium">{issue.type}</div>
+              <p className="text-sm mt-1">{issue.description}</p>
+              {issue.lineNumbers && issue.lineNumbers.length > 0 && (
+                <div className="mt-1 text-xs">
+                  <span className="font-medium">Lines: </span>
+                  {issue.lineNumbers.join(', ')}
+                </div>
+              )}
+            </div>
+          ))}
+          {partialIssues.length > 5 && (
+            <div className="text-center text-sm text-gray-500 dark:text-gray-400">
+              +{partialIssues.length - 5} more issues found
+            </div>
+          )}
+        </div>
+        <div className="mt-2 text-sm text-gray-500 dark:text-gray-400">
+          These are preliminary findings from processing chunks of your code.
+          The final review will include prioritized issues and detailed suggestions.
+        </div>
+      </div>
+    );
+  };
+
   return (
     <ThemeProvider>
       <MainLayout>
@@ -288,7 +360,7 @@ export default function HomePage() {
         )}
       
         <div className="p-6 max-w-6xl mx-auto">
-          {!reviewResult || (reviewProgress.status === 'analyzing') ? (
+          {!reviewResult || (isReviewing) ? (
             <div>
               <h1 className="text-2xl font-bold mb-6">New Code Review</h1>
               
@@ -299,7 +371,7 @@ export default function HomePage() {
               )}
               
               {/* Progress Indicator */}
-              {reviewProgress.status === 'analyzing' && (
+              {isReviewing && (
                 <div className="mb-6">
                   <div className="flex justify-between items-center mb-2">
                     <div className="text-sm font-medium">
@@ -315,6 +387,28 @@ export default function HomePage() {
                       style={{ width: `${reviewProgress.progress}%` }}
                     ></div>
                   </div>
+                  
+                  {/* Chunk processing info */}
+                  {isChunkedProcessing && reviewProgress.chunkInfo && (
+                    <div className="mt-2 text-xs text-gray-500 dark:text-gray-400 flex items-center">
+                      <div className="mr-2">Processing chunks:</div>
+                      <div className="flex space-x-1">
+                        {Array.from({ length: reviewProgress.chunkInfo.total }).map((_, i) => (
+                          <div 
+                            key={i} 
+                            className={`w-2 h-2 rounded-full ${
+                              i < reviewProgress.chunkInfo!.processed 
+                                ? 'bg-green-500' 
+                                : 'bg-gray-300 dark:bg-gray-600'
+                            }`}
+                          ></div>
+                        ))}
+                      </div>
+                      <div className="ml-2">
+                        {reviewProgress.chunkInfo.processed} of {reviewProgress.chunkInfo.total} completed
+                      </div>
+                    </div>
+                  )}
                   
                   {/* Cancel button */}
                   <div className="mt-2 flex justify-end">
@@ -373,6 +467,9 @@ export default function HomePage() {
                 onLanguageChange={setLanguage}
               />
               
+              {/* Display partial issues while processing */}
+              {isReviewing && reviewProgress.progress > 20 && renderPartialIssues()}
+              
               <div className="mt-6 flex justify-end">
                 <button
                   onClick={handleReviewCode}
@@ -397,6 +494,7 @@ export default function HomePage() {
                   <button
                     onClick={() => {
                       setReviewResult(null);
+                      setPartialIssues([]);
                       setReviewProgress({
                         status: 'idle',
                         progress: 0
