@@ -68,7 +68,7 @@ export default function Sidebar({
               />
             </svg>
           </div>
-          <h1 className="font-bold text-xl tracking-tight">CleanCodeAI</h1>
+          <h1 className="font-bold text-xl tracking-tight">CodeReviewAI</h1>
         </div>
         
         {/* Close button (mobile only) */}

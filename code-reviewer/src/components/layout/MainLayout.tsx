@@ -181,7 +181,7 @@ export default function MainLayout({
                 />
               </svg>
             </button>
-            <h1 className="text-xl font-bold">CleanCodeAI</h1>
+            <h1 className="text-xl font-bold">CodeReviewAI</h1>
           </div>
           
           {/* Right side of header */}
