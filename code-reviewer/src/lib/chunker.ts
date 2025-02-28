@@ -391,7 +391,6 @@ function findSafeBreakPoint(
     if (line === '') {
       // Check if next line is a comment - if so, keep going
       if (currentLine + i + 1 < lines.length) {
-        const nextLine = lines[currentLine + i + 1].trim();
         if (commentState[currentLine + i + 1].inComment && i < MAX_LOOKAHEAD - 1) {
           continue;
         }
@@ -940,7 +939,6 @@ function identifyJSStructures(code: string): CodeStructure[] {
   // Very simplified parser - a real implementation would use an AST parser
   let currentStructure: Partial<CodeStructure> | null = null;
   let braceCount = 0;
-  let inString = false;
   let inComment = false;
   
   for (let i = 0; i < lines.length; i++) {
@@ -1034,7 +1032,7 @@ function identifyJSStructures(code: string): CodeStructure[] {
     
     // Count braces to track nesting
     if (currentStructure !== null) {
-      let tempLine = line;
+      const tempLine = line;
       let pos = 0;
       
       // More accurate brace counting with string and comment support
@@ -1101,7 +1099,6 @@ function identifyPythonStructures(code: string): CodeStructure[] {
   
   let currentStructure: Partial<CodeStructure> | null = null;
   let baseIndent = -1;
-  let currentIndent = -1;
   
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -1125,7 +1122,6 @@ function identifyPythonStructures(code: string): CodeStructure[] {
           startLine: i,
         };
         baseIndent = indent;
-        currentIndent = indent;
       }
       // Class definition
       else if ((match = trimmedLine.match(/^class\s+(\w+)(?:\(.*\))?:/))) {
@@ -1135,7 +1131,6 @@ function identifyPythonStructures(code: string): CodeStructure[] {
           startLine: i,
         };
         baseIndent = indent;
-        currentIndent = indent;
       }
     }
     // If we're inside a structure, check for end
@@ -1156,7 +1151,6 @@ function identifyPythonStructures(code: string): CodeStructure[] {
             startLine: i,
           };
           baseIndent = indent;
-          currentIndent = indent;
         }
         else if ((match = trimmedLine.match(/^class\s+(\w+)(?:\(.*\))?:/))) {
           currentStructure = {
@@ -1165,13 +1159,6 @@ function identifyPythonStructures(code: string): CodeStructure[] {
             startLine: i,
           };
           baseIndent = indent;
-          currentIndent = indent;
-        }
-      }
-      else {
-        // Update current indent level
-        if (trimmedLine !== '') {
-          currentIndent = indent;
         }
       }
     }
@@ -1197,7 +1184,6 @@ function identifyCStyleStructures(code: string, language: string): CodeStructure
   let currentStructure: Partial<CodeStructure> | null = null;
   let braceCount = 0;
   let inComment = false;
-  let inString = false;
   
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
@@ -1285,7 +1271,7 @@ function identifyCStyleStructures(code: string, language: string): CodeStructure
     
     // Count braces to track nesting
     if (currentStructure !== null) {
-      let tempLine = trimmedLine;
+      const tempLine = trimmedLine;
       let pos = 0;
       
       // More accurate brace counting with string and comment support
