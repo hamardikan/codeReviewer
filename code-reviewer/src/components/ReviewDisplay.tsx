@@ -2,7 +2,7 @@
  * Enhanced Review display component for showing code review results.
  * Implements a GitHub-style diff view with expandable sections and line numbers for better navigation.
  */
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useTheme } from '@/contexts/ThemeContext';
 import { CodeReviewResponse, CodeChangeSection } from '@/lib/gemini';
 import Toast, { ToastType } from '@/components/Toast';
@@ -133,7 +133,7 @@ export default function ReviewDisplay({
   };
 
   // Update the custom code based on accepted/rejected changes
-  const updateCustomCode = () => {
+  const updateCustomCode = useCallback(() => {
     let finalCode = '';
     
     for (const section of codeSections) {
@@ -148,12 +148,12 @@ export default function ReviewDisplay({
     }
     
     setCustomCode(finalCode);
-  };
+  }, [codeSections, acceptedChanges]);
 
   // Effect to update custom code whenever accepted/rejected changes are updated
   useEffect(() => {
     updateCustomCode();
-  }, [acceptedChanges, rejectedChanges, codeSections]);
+  }, [updateCustomCode]);
 
   // Grouped changes by clean code principle
   const getPrincipleGroups = () => {
@@ -745,8 +745,6 @@ function generateCodeSections(
     return posA - posB;
   });
   
-  let remainingCode = originalCode;
-  let processedCode = '';
   let currentPosition = 0;
   
   // Process each suggestion
@@ -766,7 +764,6 @@ function generateCodeSections(
           content: unchangedContent
         });
       }
-      processedCode += unchangedContent;
     }
     
     // Add the changed section
@@ -779,8 +776,7 @@ function generateCodeSections(
       cleanCodePrinciple: getCategoryFromDescription(suggestion.description),
       lineNumbers: getLineNumbersForCode(originalCode, suggestion.before)
     });
-    
-    processedCode += suggestion.after;
+
     currentPosition = beforePos + suggestion.before.length;
   }
   

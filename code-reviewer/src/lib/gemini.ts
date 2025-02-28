@@ -303,8 +303,8 @@ This preliminary analysis will be used to guide a context-aware code review proc
 /**
  * Validates and repairs a review map, ensuring all required fields are present.
  */
-function validateAndRepairReviewMap(response: any, code: string): CodeReviewMap {
-  const lines = code.split('\n').length;
+function validateAndRepairReviewMap(response: Record<string, unknown>, code: string): CodeReviewMap {
+  const lineCount = code.split('\n').length;
   
   // Ensure the targetAreas array exists and is valid
   if (!Array.isArray(response.targetAreas)) {
@@ -312,15 +312,22 @@ function validateAndRepairReviewMap(response: any, code: string): CodeReviewMap 
   }
   
   // Validate and repair target areas
-  response.targetAreas = response.targetAreas.map((area: any) => ({
+  response.targetAreas = (response.targetAreas as Array<{
+    startLine?: number;
+    endLine?: number;
+    type?: string;
+    description?: string;
+    severity?: string;
+    cleanCodePrinciple?: string;
+  }>).map((area) => ({
     startLine: typeof area.startLine === 'number' ? area.startLine : 0,
     endLine: typeof area.endLine === 'number' ? 
-      Math.min(area.endLine, lines - 1) : 
-      Math.min(area.startLine + 5, lines - 1),
+      Math.min(area.endLine, lineCount - 1) : 
+      Math.min(area.startLine ? area.startLine + 5 : 5, lineCount - 1),
     type: area.type || 'unknown',
     description: area.description || 'Area needs improvement',
-    severity: ['critical', 'high', 'medium', 'low'].includes(area.severity) ? 
-      area.severity : 'medium',
+    severity: (area.severity && ['critical', 'high', 'medium', 'low'].includes(area.severity)) ? 
+      area.severity as 'critical' | 'high' | 'medium' | 'low' : 'medium',
     cleanCodePrinciple: area.cleanCodePrinciple || getCategoryFromDescription(area.description || '')
   }));
   
@@ -331,21 +338,24 @@ function validateAndRepairReviewMap(response: any, code: string): CodeReviewMap 
       classes: [],
       imports: []
     };
-  }
-  
-  // Validate functions
-  if (!Array.isArray(response.overallStructure.functions)) {
-    response.overallStructure.functions = [];
-  }
-  
-  // Validate classes
-  if (!Array.isArray(response.overallStructure.classes)) {
-    response.overallStructure.classes = [];
-  }
-  
-  // Validate imports
-  if (!Array.isArray(response.overallStructure.imports)) {
-    response.overallStructure.imports = [];
+  } else {
+    // Cast to the correct type
+    const overallStructure = response.overallStructure as CodeReviewMap['overallStructure'];
+    
+    // Validate functions
+    if (!Array.isArray(overallStructure.functions)) {
+      overallStructure.functions = [];
+    }
+    
+    // Validate classes
+    if (!Array.isArray(overallStructure.classes)) {
+      overallStructure.classes = [];
+    }
+    
+    // Validate imports
+    if (!Array.isArray(overallStructure.imports)) {
+      overallStructure.imports = [];
+    }
   }
   
   // Ensure generalIssues exists
@@ -354,23 +364,27 @@ function validateAndRepairReviewMap(response: any, code: string): CodeReviewMap 
   }
   
   // Validate general issues
-  response.generalIssues = response.generalIssues.map((issue: any) => ({
+  response.generalIssues = (response.generalIssues as Array<{
+    type?: string;
+    description?: string;
+    severity?: string;
+    impact?: string;
+  }>).map((issue) => ({
     type: issue.type || 'general',
     description: issue.description || 'Code quality issue detected',
-    severity: ['critical', 'high', 'medium', 'low'].includes(issue.severity) ? 
-      issue.severity : 'medium',
+    severity: (issue.severity && ['critical', 'high', 'medium', 'low'].includes(issue.severity)) ? 
+      issue.severity as 'critical' | 'high' | 'medium' | 'low' : 'medium',
     impact: issue.impact || 'May affect code quality and maintainability'
   }));
   
-  return response as CodeReviewMap;
+  return response as unknown as CodeReviewMap;
 }
 
 /**
  * Creates a fallback review map when analysis fails.
  */
 function createFallbackReviewMap(code: string, language: string): CodeReviewMap {
-  const lines = code.split('\n');
-  
+    
   // Create a minimal valid review map
   return {
     targetAreas: [],
@@ -601,7 +615,7 @@ function createCodeReviewPrompt(
   language: string, 
   options: CodeReviewOptions = {}
 ): string {
-  const { reviewFocus, chunkContext, isPartialReview, reviewMap, fullCodeContext } = options;
+  const { reviewFocus, chunkContext, isPartialReview, reviewMap } = options;
   const focusAreas = [];
   
   if (!reviewFocus || reviewFocus.cleanCode) {
