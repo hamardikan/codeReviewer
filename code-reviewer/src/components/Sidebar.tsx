@@ -14,6 +14,7 @@ interface SidebarProps {
   activeReviewId?: string;
   onSelectReview?: (reviewId: string) => void;
   onDeleteReview?: (reviewId: string) => void;
+  onDeleteAllReviews?: () => void; // New prop for deleting all history
 }
 
 export default function Sidebar({
@@ -22,7 +23,8 @@ export default function Sidebar({
   reviews,
   activeReviewId,
   onSelectReview,
-  onDeleteReview
+  onDeleteReview,
+  onDeleteAllReviews
 }: SidebarProps) {
   const { theme } = useTheme();
 
@@ -153,12 +155,12 @@ export default function Sidebar({
                 `}
                 onClick={() => onSelectReview && onSelectReview(review.id)}
               >
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between group">
                   <div className="font-medium truncate">{review.name}</div>
                   
-                  {/* Delete button */}
+                  {/* Delete button - always visible on hover */}
                   <button 
-                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600"
+                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-gray-200 dark:hover:bg-gray-600 transition-opacity"
                     onClick={(e) => {
                       e.stopPropagation();
                       if (onDeleteReview) {
@@ -168,7 +170,7 @@ export default function Sidebar({
                   >
                     <svg 
                       xmlns="http://www.w3.org/2000/svg" 
-                      className="h-4 w-4 text-gray-500" 
+                      className="h-4 w-4 text-gray-500 hover:text-red-500" 
                       fill="none" 
                       viewBox="0 0 24 24" 
                       stroke="currentColor"
@@ -197,6 +199,38 @@ export default function Sidebar({
       {/* Footer */}
       <div className={`p-4 border-t ${theme === 'dark' ? 'border-gray-700' : 'border-gray-200'} text-sm text-gray-500 flex justify-between items-center`}>
         <div>v1.0.0</div>
+        
+        {/* Improved: Delete all reviews button */}
+        <div className="flex items-center">
+          <button
+            onClick={() => onDeleteAllReviews && onDeleteAllReviews()}
+            className={`
+              text-xs px-2 py-1 rounded 
+              ${theme === 'dark' 
+                ? 'text-red-300 hover:text-red-200 hover:bg-red-900 hover:bg-opacity-30' 
+                : 'text-red-600 hover:text-red-700 hover:bg-red-100'
+              } 
+              flex items-center transition-colors
+            `}
+            aria-label="Delete all history"
+          >
+            <svg 
+              xmlns="http://www.w3.org/2000/svg" 
+              className="h-4 w-4 mr-1" 
+              fill="none" 
+              viewBox="0 0 24 24" 
+              stroke="currentColor"
+            >
+              <path 
+                strokeLinecap="round" 
+                strokeLinejoin="round" 
+                strokeWidth={2} 
+                d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" 
+              />
+            </svg>
+            Clear History
+          </button>
+        </div>
       </div>
     </aside>
   );

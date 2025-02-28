@@ -4,10 +4,12 @@
  */
 import React, { useState, useEffect } from 'react';
 import { useTheme } from '@/contexts/ThemeContext';
-import { getReviews, deleteReview, ReviewHistoryItem } from '@/lib/localStorage';
+import { getReviews, deleteReview, clearAllReviews, ReviewHistoryItem } from '@/lib/localStorage';
 import { useRouter } from 'next/navigation';
 import Sidebar from '@/components/Sidebar';
 import ThemeToggle from '@/components/ThemeToggle';
+import Toast, { ToastType } from '@/components/Toast';
+import ConfirmationModal from '@/components/ConfirmationModal';
 
 interface MainLayoutProps {
   children: React.ReactNode;
@@ -25,6 +27,17 @@ export default function MainLayout({
   const [reviews, setReviews] = useState<ReviewHistoryItem[]>([]);
   // Add a flag to track client-side rendering
   const [isClient, setIsClient] = useState(false);
+  // Add state for toast notifications
+  const [toast, setToast] = useState<{ message: string; type: ToastType } | null>(null);
+  
+  // State for confirmation modals
+  const [deleteModal, setDeleteModal] = useState<{
+    isOpen: boolean;
+    reviewId?: string;
+    isDeleteAll?: boolean;
+  }>({
+    isOpen: false
+  });
 
   // Effect to set client-side rendering flag
   useEffect(() => {
@@ -52,19 +65,72 @@ export default function MainLayout({
     }
   }, [isClient]);
 
-  // Handle review deletion
+  // Handle review deletion - show confirmation modal
   const handleDeleteReview = (id: string) => {
-    const confirmed = window.confirm('Are you sure you want to delete this review?');
-    if (confirmed) {
-      const success = deleteReview(id);
+    setDeleteModal({
+      isOpen: true,
+      reviewId: id,
+      isDeleteAll: false
+    });
+  };
+  
+  // Confirm delete review
+  const confirmDeleteReview = () => {
+    if (deleteModal.reviewId) {
+      const success = deleteReview(deleteModal.reviewId);
       if (success) {
         setReviews(getReviews());
         // If the deleted review is the active one, navigate back to the home page
-        if (id === activeReviewId) {
+        if (deleteModal.reviewId === activeReviewId) {
           router.push('/');
         }
+        
+        // Show success toast
+        setToast({
+          message: 'Review deleted successfully',
+          type: 'success'
+        });
       }
     }
+    // Close the modal
+    setDeleteModal({ isOpen: false });
+  };
+  
+  // Handle deleting all reviews - show confirmation modal
+  const handleDeleteAllReviews = () => {
+    // Only proceed if there are reviews to delete
+    if (reviews.length === 0) {
+      setToast({
+        message: 'No review history to clear',
+        type: 'info'
+      });
+      return;
+    }
+    
+    setDeleteModal({
+      isOpen: true,
+      isDeleteAll: true
+    });
+  };
+  
+  // Confirm delete all reviews
+  const confirmDeleteAllReviews = () => {
+    clearAllReviews();
+    setReviews([]);
+    
+    // If viewing a review page, navigate back to home
+    if (activeReviewId) {
+      router.push('/');
+    }
+    
+    // Show success toast
+    setToast({
+      message: 'All review history has been cleared',
+      type: 'success'
+    });
+    
+    // Close the modal
+    setDeleteModal({ isOpen: false });
   };
 
   // Handle review selection
@@ -87,6 +153,7 @@ export default function MainLayout({
         activeReviewId={activeReviewId}
         onSelectReview={handleSelectReview}
         onDeleteReview={handleDeleteReview}
+        onDeleteAllReviews={handleDeleteAllReviews}
       />
 
       {/* Main content */}
@@ -127,6 +194,41 @@ export default function MainLayout({
         <main className="flex-1 overflow-auto">
           {children}
         </main>
+        
+        {/* Toast notification */}
+        {toast && (
+          <Toast
+            message={toast.message}
+            type={toast.type}
+            onClose={() => setToast(null)}
+          />
+        )}
+        
+        {/* Confirmation modal for deleting a single review */}
+        {deleteModal.isOpen && !deleteModal.isDeleteAll && (
+          <ConfirmationModal
+            title="Delete Review"
+            message="Are you sure you want to delete this review? This action cannot be undone."
+            confirmText="Delete"
+            confirmButtonColor="red"
+            isOpen={true}
+            onConfirm={confirmDeleteReview}
+            onCancel={() => setDeleteModal({ isOpen: false })}
+          />
+        )}
+        
+        {/* Confirmation modal for deleting all reviews */}
+        {deleteModal.isOpen && deleteModal.isDeleteAll && (
+          <ConfirmationModal
+            title="Clear All History"
+            message="Are you sure you want to delete all review history? This action cannot be undone."
+            confirmText="Clear All"
+            confirmButtonColor="red"
+            isOpen={true}
+            onConfirm={confirmDeleteAllReviews}
+            onCancel={() => setDeleteModal({ isOpen: false })}
+          />
+        )}
       </div>
     </div>
   );
