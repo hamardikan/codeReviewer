@@ -2,7 +2,11 @@
  * Enhanced code chunking module for distributed code review.
  * Provides functionality to divide code into logical chunks while maintaining context.
  * Prevents splitting comments into separate chunks and preserves code structure.
+ * 
+ * Now includes context-aware chunking based on preliminary analysis results.
  */
+
+import { CodeReviewMap } from './gemini';
 
 // Define the structure for a code chunk
 export interface CodeChunk {
@@ -17,6 +21,14 @@ export interface CodeChunk {
     dependencies?: string[];
   };
   metadata?: Record<string, unknown>;
+  // New fields for context-aware chunking
+  targetAreas?: Array<{
+    startLine: number;
+    endLine: number;
+    type: string;
+    description: string;
+    cleanCodePrinciple?: string;
+  }>;
 }
 
 // Options for chunking strategies
@@ -27,6 +39,10 @@ export interface ChunkerOptions {
   preserveImports?: boolean;
   smartChunking?: boolean;
   preventCommentOnlyChunks?: boolean;
+  // New options for context-aware chunking
+  contextAware?: boolean;
+  reviewMap?: CodeReviewMap;
+  maintainPrinciples?: boolean;  // Ensures chunks preserve clean code principles context
 }
 
 // Structure representing a logical code unit (function, class, etc.)
@@ -39,19 +55,32 @@ export interface CodeStructure {
   isExported?: boolean;
 }
 
+// Target area structure from review map
+export interface TargetArea {
+  startLine: number;
+  endLine: number;
+  type: string;
+  description: string;
+  cleanCodePrinciple?: string;
+  padding?: number;  // Additional context lines to add
+}
+
 // Default options
 const DEFAULT_OPTIONS: Required<ChunkerOptions> = {
-  maxChunkSize: 1000, // Max lines per chunk
-  minChunkSize: 50,   // Min lines per chunk
+  maxChunkSize: 1500, // Max lines per chunk
+  minChunkSize: 100,   // Min lines per chunk
   overlapPercentage: 15, // Increased overlap between chunks for better context
   preserveImports: true, // Include import statements in each chunk
   smartChunking: true,   // Use language-specific chunking
   preventCommentOnlyChunks: true, // Prevent chunks with only comments
+  contextAware: false,   // Use context-aware chunking if reviewMap is provided
+  reviewMap: {} as CodeReviewMap,  // Preliminary analysis results
+  maintainPrinciples: true, // Preserve clean code principles context
 };
 
 /**
  * Main chunking function that divides code into logical chunks
- * Enhanced to preserve context and prevent comment-only chunks
+ * Enhanced to support context-aware chunking based on preliminary analysis
  * 
  * @param code - The full code to be chunked
  * @param language - Programming language of the code
@@ -83,6 +112,12 @@ export function chunkCode(
     }];
   }
   
+  // Use context-aware chunking if review map is provided
+  if (finalOptions.contextAware && finalOptions.reviewMap) {
+    return createContextAwareChunks(code, language, finalOptions);
+  }
+  
+  // Otherwise use regular chunking
   // Choose appropriate chunking strategy based on language and options
   let chunks: CodeChunk[];
   
@@ -120,6 +155,260 @@ export function chunkCode(
   }
   
   return chunks;
+}
+
+/**
+ * Creates context-aware chunks based on preliminary analysis results.
+ * This ensures target areas are not split across chunks and maintains important context.
+ * 
+ * @param code - The full code to be chunked
+ * @param language - Programming language of the code
+ * @param options - Chunking options including review map
+ * @returns Array of code chunks optimized for review context
+ */
+export function createContextAwareChunks(
+  code: string,
+  language: string,
+  options: Required<ChunkerOptions>
+): CodeChunk[] {
+  if (!options.reviewMap) {
+    console.warn('Review map not provided for context-aware chunking, falling back to regular chunking');
+    return enhancedChunkGeneric(code, language, options);
+  }
+  
+  const lines = code.split('\n');
+  const reviewMap = options.reviewMap;
+  const chunks: CodeChunk[] = [];
+  
+  // Extract important information from the review map
+  const targetAreas = extractTargetAreas(reviewMap);
+  const codeStructures = extractCodeStructures(reviewMap);
+  const imports = reviewMap.overallStructure.imports || [];
+  
+  // If there are no target areas or code structures, fall back to regular chunking
+  if (targetAreas.length === 0 && codeStructures.length === 0) {
+    console.warn('No target areas or code structures found in review map, falling back to regular chunking');
+    return enhancedChunkGeneric(code, language, options);
+  }
+  
+  // Add padding to target areas to provide context
+  const paddedTargetAreas = addPaddingToTargetAreas(targetAreas, lines.length, 10);
+  
+  // Merge overlapping target areas
+  const mergedTargetAreas = mergeOverlappingAreas(paddedTargetAreas);
+  
+  // Create chunks based on target areas and code structures
+  const chunkBoundaries = determineChunkBoundaries(mergedTargetAreas, codeStructures, lines.length, options);
+
+  // Create chunks based on boundaries
+  for (let i = 0; i < chunkBoundaries.length - 1; i++) {
+    const startLine = chunkBoundaries[i];
+    const endLine = chunkBoundaries[i + 1] - 1;
+    
+    // Get target areas in this chunk
+    const areasInChunk = targetAreas.filter(area => 
+      (area.startLine >= startLine && area.startLine <= endLine) ||
+      (area.endLine >= startLine && area.endLine <= endLine) ||
+      (area.startLine <= startLine && area.endLine >= endLine)
+    );
+    
+    // Create the chunk
+    const chunkCode = lines.slice(startLine, endLine + 1).join('\n');
+    
+    // Create the chunk
+    chunks.push({
+      id: generateChunkId(),
+      code: chunkCode,
+      language,
+      startLine,
+      endLine,
+      context: {
+        imports,
+        declarations: extractDeclarations(chunkCode, language),
+        dependencies: []
+      },
+      metadata: {
+        isContextAware: true,
+        targetAreas: areasInChunk.map(area => ({
+          type: area.type,
+          description: area.description,
+          cleanCodePrinciple: area.cleanCodePrinciple,
+          relativeStartLine: Math.max(0, area.startLine - startLine),
+          relativeEndLine: Math.min(endLine - startLine, area.endLine - startLine)
+        }))
+      },
+      targetAreas: areasInChunk.map(area => ({
+        startLine: Math.max(0, area.startLine - startLine),
+        endLine: Math.min(endLine - startLine, area.endLine - startLine),
+        type: area.type,
+        description: area.description,
+        cleanCodePrinciple: area.cleanCodePrinciple
+      }))
+    });
+  }
+  
+  // If we ended up with no chunks (which shouldn't happen), fall back to generic chunking
+  if (chunks.length === 0) {
+    return enhancedChunkGeneric(code, language, options);
+  }
+  
+  return chunks;
+}
+
+/**
+ * Extract target areas from review map
+ */
+function extractTargetAreas(reviewMap: CodeReviewMap): TargetArea[] {
+  return reviewMap.targetAreas.map(area => ({
+    startLine: area.startLine,
+    endLine: area.endLine,
+    type: area.type,
+    description: area.description,
+    cleanCodePrinciple: area.cleanCodePrinciple
+  }));
+}
+
+/**
+ * Extract code structures from review map
+ */
+function extractCodeStructures(reviewMap: CodeReviewMap): Array<{startLine: number, endLine: number}> {
+  const structures: Array<{startLine: number, endLine: number}> = [];
+  
+  // Extract functions
+  if (reviewMap.overallStructure.functions) {
+    for (const func of reviewMap.overallStructure.functions) {
+      structures.push({
+        startLine: func.startLine,
+        endLine: func.endLine
+      });
+    }
+  }
+  
+  // Extract classes
+  if (reviewMap.overallStructure.classes) {
+    for (const cls of reviewMap.overallStructure.classes) {
+      structures.push({
+        startLine: cls.startLine,
+        endLine: cls.endLine
+      });
+    }
+  }
+  
+  return structures;
+}
+
+/**
+ * Add padding to target areas to provide context
+ */
+function addPaddingToTargetAreas(targetAreas: TargetArea[], maxLines: number, padding: number): TargetArea[] {
+  return targetAreas.map(area => ({
+    ...area,
+    startLine: Math.max(0, area.startLine - padding),
+    endLine: Math.min(maxLines - 1, area.endLine + padding)
+  }));
+}
+
+/**
+ * Merge overlapping target areas to avoid splitting logical units
+ */
+function mergeOverlappingAreas(areas: TargetArea[]): TargetArea[] {
+  if (areas.length <= 1) return areas;
+  
+  // Sort areas by start line
+  const sortedAreas = [...areas].sort((a, b) => a.startLine - b.startLine);
+  const mergedAreas: TargetArea[] = [];
+  
+  let currentArea = sortedAreas[0];
+  
+  for (let i = 1; i < sortedAreas.length; i++) {
+    const nextArea = sortedAreas[i];
+    
+    // Check if areas overlap
+    if (nextArea.startLine <= currentArea.endLine) {
+      // Merge the areas
+      currentArea = {
+        startLine: currentArea.startLine,
+        endLine: Math.max(currentArea.endLine, nextArea.endLine),
+        type: currentArea.type,
+        description: `${currentArea.description} + ${nextArea.description}`,
+        cleanCodePrinciple: currentArea.cleanCodePrinciple
+      };
+    } else {
+      // Areas don't overlap, add current area to merged list and move to next
+      mergedAreas.push(currentArea);
+      currentArea = nextArea;
+    }
+  }
+  
+  // Add the last area
+  mergedAreas.push(currentArea);
+  
+  return mergedAreas;
+}
+
+/**
+ * Determine chunk boundaries based on target areas and code structures
+ */
+function determineChunkBoundaries(
+  targetAreas: TargetArea[],
+  codeStructures: Array<{startLine: number, endLine: number}>,
+  totalLines: number,
+  options: Required<ChunkerOptions>
+): number[] {
+  // Start with the first line
+  const boundaries: number[] = [0];
+  
+  // Add start and end of each target area
+  for (const area of targetAreas) {
+    if (!boundaries.includes(area.startLine)) {
+      boundaries.push(area.startLine);
+    }
+    if (!boundaries.includes(area.endLine + 1) && area.endLine + 1 < totalLines) {
+      boundaries.push(area.endLine + 1);
+    }
+  }
+  
+  // Add start and end of each code structure
+  for (const structure of codeStructures) {
+    if (!boundaries.includes(structure.startLine)) {
+      boundaries.push(structure.startLine);
+    }
+    if (!boundaries.includes(structure.endLine + 1) && structure.endLine + 1 < totalLines) {
+      boundaries.push(structure.endLine + 1);
+    }
+  }
+  
+  // Add the end of the file
+  if (!boundaries.includes(totalLines)) {
+    boundaries.push(totalLines);
+  }
+  
+  // Sort the boundaries
+  boundaries.sort((a, b) => a - b);
+  
+  // Check if any chunk is too large and split if necessary
+  const result: number[] = [boundaries[0]];
+  
+  for (let i = 1; i < boundaries.length; i++) {
+    const prevBoundary = result[result.length - 1];
+    const currentBoundary = boundaries[i];
+    const chunkSize = currentBoundary - prevBoundary;
+    
+    if (chunkSize > options.maxChunkSize) {
+      // This chunk is too large, split it
+      const numSplits = Math.ceil(chunkSize / options.maxChunkSize);
+      const splitSize = Math.ceil(chunkSize / numSplits);
+      
+      for (let j = 1; j < numSplits; j++) {
+        const splitPoint = prevBoundary + j * splitSize;
+        result.push(splitPoint);
+      }
+    }
+    
+    result.push(currentBoundary);
+  }
+  
+  return result;
 }
 
 /**
