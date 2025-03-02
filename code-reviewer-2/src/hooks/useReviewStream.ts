@@ -1,9 +1,8 @@
 import { useState, useCallback, useRef } from 'react';
 import { parseReviewText } from '@/lib/text-parser';
 import { CodeReviewResponse } from '@/lib/prompts';
-import { ReviewStatus } from '@/lib/review-store';
 import { createStorableReview, addReview } from '@/lib/storage-utils';
-import { Language } from '@/lib/language-utils';
+import { Language, getLanguageById } from '@/lib/language-utils';
 
 /**
  * States for the review streaming process
@@ -46,7 +45,7 @@ export function useReviewStream() {
     },
     parseError: null,
     error: null,
-    language: { id: 'javascript', name: 'JavaScript', extensions: ['js'], setup: () => {} }
+    language: getLanguageById('javascript')
   });
   
   // Reference to the current reader to allow cancellation
@@ -67,7 +66,7 @@ export function useReviewStream() {
     if (readerRef.current) {
       try {
         await readerRef.current.cancel();
-      } catch (e) {
+      } catch  {
         // Ignore cancellation errors
       }
       readerRef.current = null;

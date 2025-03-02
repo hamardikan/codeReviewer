@@ -10,6 +10,7 @@ import { markdown } from '@codemirror/lang-markdown';
 import { json } from '@codemirror/lang-json';
 import { xml } from '@codemirror/lang-xml';
 import { rust } from '@codemirror/lang-rust';
+import { Extension } from '@codemirror/state';
 
 /**
  * Supported programming language configuration
@@ -18,7 +19,7 @@ export interface Language {
   id: string;
   name: string;
   extensions: string[];
-  setup: () => any;
+  setup: () => Extension;
   filePatterns?: RegExp[];
   codePatterns?: RegExp[];
 }

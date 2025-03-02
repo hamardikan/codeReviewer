@@ -22,6 +22,33 @@ export interface StoredReview {
 }
 
 /**
+ * Structure of old review format for migration
+ */
+interface OldReviewFormat {
+  id: string;
+  timestamp?: number;
+  parsedResponse?: {
+    summary?: string;
+    suggestions?: OldSuggestionFormat[];
+    cleanCode?: string;
+  };
+  language?: string;
+  filename?: string;
+}
+
+/**
+ * Structure of old suggestion format for migration
+ */
+interface OldSuggestionFormat {
+  id: string;
+  lineNumber: number;
+  originalCode: string;
+  suggestedCode: string;
+  explanation: string;
+  accepted: boolean;
+}
+
+/**
  * Check if we're running in a browser environment where localStorage is available
  */
 const isBrowser = typeof window !== 'undefined';
@@ -92,7 +119,7 @@ export function loadReviews(): StoredReview[] {
       const oldData = localStorage.getItem('code-reviews');
       if (oldData) {
         try {
-          const oldReviews = JSON.parse(oldData);
+          const oldReviews = JSON.parse(oldData) as OldReviewFormat[];
           // Migrate to new format and save
           const migratedReviews = migrateOldReviews(oldReviews);
           saveReviews(migratedReviews);
@@ -192,13 +219,13 @@ export function createStorableReview(
  * @param oldReviews - Reviews in the old format
  * @returns Reviews in the new format
  */
-function migrateOldReviews(oldReviews: any[]): StoredReview[] {
+function migrateOldReviews(oldReviews: OldReviewFormat[]): StoredReview[] {
   return oldReviews.map(old => ({
     id: old.id,
     timestamp: old.timestamp || Date.now(),
     parsedResponse: {
       summary: old.parsedResponse?.summary || '',
-      suggestions: (old.parsedResponse?.suggestions || []).map((s: any) => ({
+      suggestions: (old.parsedResponse?.suggestions || []).map((s: OldSuggestionFormat) => ({
         id: s.id,
         lineNumber: s.lineNumber,
         originalCode: s.originalCode,

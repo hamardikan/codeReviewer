@@ -7,7 +7,7 @@ import CodeReviewDisplay from '@/components/CodeReviewDisplay';
 import ReviewHistory from '@/components/ReviewHistory';
 import { useReviewStream } from '@/hooks/useReviewStream';
 import { loadReviews, StoredReview } from '@/lib/storage-utils';
-import { getLanguageById, LANGUAGES } from '@/lib/language-utils';
+import { getLanguageById} from '@/lib/language-utils';
 
 export default function Home() {
   const { reviewState, startReview, updateSuggestion, repairParsing } = useReviewStream();
@@ -22,9 +22,10 @@ export default function Home() {
   }, []);
   
   // Start a code review
-  const handleSubmitCode = (code: string, language: any, filename?: string) => {
+  const handleSubmitCode = (code: string, language: string, filename?: string) => {
     setOriginalCode(code); // Store the original code
-    startReview(code, language, filename);
+    const languageObj = getLanguageById(language);
+    startReview(code, languageObj, filename);
     setActiveTab('review');
     setSelectedHistoryReview(null);
   };

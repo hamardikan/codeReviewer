@@ -7,7 +7,7 @@ import { vscodeDark } from '@uiw/codemirror-theme-vscode';
 import { LANGUAGES, detectLanguage } from '@/lib/language-utils';
 
 interface CodeInputProps {
-  onSubmit: (code: string, language: any, filename?: string) => void;
+  onSubmit: (code: string, language: string, filename?: string) => void;
   isSubmitting: boolean;
 }
 
@@ -20,7 +20,7 @@ export default function CodeInput({ onSubmit, isSubmitting }: CodeInputProps) {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (code.trim()) {
-      onSubmit(code, selectedLanguage, filename);
+      onSubmit(code, selectedLanguage.id, filename);
     }
   };
   
