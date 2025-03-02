@@ -1,6 +1,6 @@
 'use strict';
 
-const { nanoid } = require('nanoid');
+const { v4: uuid } = require('uuid');
 const { CodeReviewResponse, CodeSuggestion } = require('../models/Review');
 
 /**
@@ -93,7 +93,7 @@ function parseReviewText(rawText) {
             seenSuggestions.set(suggestionKey, true);
             
             result.suggestions.push(new CodeSuggestion({
-              id: nanoid(),
+              id: uuid(),
               lineNumber,
               originalCode,
               suggestedCode,
@@ -204,7 +204,7 @@ function repairWithRegex(rawText) {
           seenSuggestions.set(suggestionKey, true);
           
           result.suggestions.push(new CodeSuggestion({
-            id: nanoid(),
+            id: uuid(),
             lineNumber: suggestionIndex, // Use index if we can't determine line number
             originalCode,
             suggestedCode,

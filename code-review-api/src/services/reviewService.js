@@ -1,6 +1,6 @@
 'use strict';
 
-const { nanoid } = require('nanoid');
+const { v4: uuid } = require('uuid');
 const geminiService = require('./geminiService');
 const storageService = require('./storageService');
 const { createCodeReviewPrompt, createRepairPrompt } = require('../utils/prompts');
@@ -15,7 +15,7 @@ const logger = require('../utils/logger');
 async function startReview(code, language, filename) {
   try {
     // Generate a unique ID for this review
-    const reviewId = nanoid();
+    const reviewId = uuid();
     logger.info(`Starting review with ID: ${reviewId}, language: ${language}`);
     
     // Create a new review
