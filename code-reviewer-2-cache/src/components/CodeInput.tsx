@@ -69,7 +69,7 @@ export default function CodeInput({ onSubmit, isSubmitting }: CodeInputProps) {
           </label>
           <select
             id="language-select"
-            className="border border-gray-300 rounded px-2 py-1 text-sm"
+            className="border border-gray-300 rounded px-2 py-1 text-sm bg-white text-gray-800 hover:border-green-500 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent"
             value={selectedLanguage.id}
             onChange={(e) => {
               const languageId = e.target.value;
