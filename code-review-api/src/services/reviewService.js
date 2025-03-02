@@ -47,13 +47,20 @@ async function startReview(code, language, filename) {
  */
 async function processReviewInBackground(reviewId, code, language) {
   try {
-    logger.debug(`Starting background processing for review ${reviewId}`);
+    logger.info(`===== STARTING REVIEW ${reviewId} =====`);
+    logger.info(`Language: ${language}, Code length: ${code.length} characters`);
     
     // Update status to processing
     await storageService.updateReview(reviewId, { status: ReviewStatus.PROCESSING });
+    logger.debug(`Updated review ${reviewId} status to PROCESSING`);
     
     // Create the prompt for the code review
     const prompt = createCodeReviewPrompt(code, language);
+    logger.debug(`Created prompt for ${language} code review, prompt length: ${prompt.length}`);
+    
+    // Start timing the Gemini API call
+    const startTime = Date.now();
+    logger.info(`Calling Gemini API for review ${reviewId}`);
     
     // Process the response in chunks
     let chunkCount = 0;
@@ -63,33 +70,44 @@ async function processReviewInBackground(reviewId, code, language) {
       
       chunkCount++;
       if (chunkCount % 10 === 0) {
-        logger.debug(`Processed ${chunkCount} chunks for review ${reviewId}`);
+        const elapsedTime = Math.round((Date.now() - startTime) / 1000);
+        logger.debug(`Review ${reviewId}: Processed ${chunkCount} chunks (${elapsedTime}s elapsed)`);
       }
     }
     
     // Update status to completed
     await storageService.updateReview(reviewId, { status: ReviewStatus.COMPLETED });
+    logger.info(`Updated review ${reviewId} status to COMPLETED`);
     
     // Try to parse the complete response
     const review = await storageService.getReview(reviewId);
     if (review) {
       const rawText = review.getRawText();
+      logger.debug(`Parsing raw text for review ${reviewId}, length: ${rawText.length}`);
+      
       const parseResult = parseReviewText(rawText);
       
       if (parseResult.success && parseResult.result) {
+        logger.info(`Successfully parsed response for review ${reviewId}`);
+        logger.debug(`Found ${parseResult.result.suggestions.length} suggestions`);
         await storageService.updateReview(reviewId, { parsedResponse: parseResult.result });
+      } else {
+        logger.warn(`Failed to parse response for review ${reviewId}: ${parseResult.error}`);
       }
     }
     
-    logger.info(`Completed review ${reviewId} with ${chunkCount} chunks`);
+    const totalTime = Math.round((Date.now() - startTime) / 1000);
+    logger.info(`===== COMPLETED REVIEW ${reviewId} in ${totalTime}s with ${chunkCount} chunks =====`);
   } catch (error) {
-    logger.error(`Error processing review ${reviewId}:`, error);
+    logger.error(`===== ERROR PROCESSING REVIEW ${reviewId} =====`);
+    logger.error(`Error details:`, error);
     
     // Update status to error
     await storageService.updateReview(reviewId, {
       status: ReviewStatus.ERROR,
       error: error.message || 'Unknown error'
     });
+    logger.info(`Updated review ${reviewId} status to ERROR`);
   }
 }
 
@@ -218,14 +236,37 @@ async function repairReview(reviewId, rawText, language) {
  */
 async function repairWithAI(rawText, language = 'javascript') {
   try {
+    logger.info(`===== STARTING REPAIR (${language}) =====`);
+    logger.debug(`Raw text length to repair: ${rawText.length} characters`);
+    
     const prompt = createRepairPrompt(rawText, language);
+    logger.debug(`Created repair prompt, length: ${prompt.length}`);
     
     // Request the AI to fix the formatting
+    const startTime = Date.now();
+    logger.info('Calling Gemini API for repair');
     const formattedText = await geminiService.generateContent(prompt);
     
+    const repairTime = Math.round((Date.now() - startTime) / 1000);
+    logger.info(`Received repaired text in ${repairTime}s, length: ${formattedText.length}`);
+    
     // Parse the reformatted text
-    return repairWithRegex(formattedText);
+    const parseResult = repairWithRegex(formattedText);
+    
+    if (parseResult.success) {
+      logger.info('Successfully parsed repaired response');
+      logger.debug(`Found ${parseResult.result.suggestions.length} suggestions in repaired text`);
+    } else {
+      logger.warn(`Failed to parse repaired response: ${parseResult.error}`);
+    }
+    
+    logger.info(`===== COMPLETED REPAIR (${parseResult.success ? 'SUCCESS' : 'FAILED'}) =====`);
+    
+    return parseResult;
   } catch (error) {
+    logger.error('===== ERROR DURING REPAIR =====');
+    logger.error('Error details:', error);
+    
     return {
       success: false,
       error: error.message || 'Unknown error during AI repair'

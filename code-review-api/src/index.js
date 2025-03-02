@@ -49,7 +49,11 @@ cron.schedule('*/30 * * * *', async () => {
 
 // Start the server
 const server = app.listen(config.port, () => {
+  logger.info(`=================================================`);
   logger.info(`Server started on port ${config.port} in ${config.nodeEnv} mode`);
+  logger.info(`Gemini API key configured: ${!!config.gemini.apiKey}`);
+  logger.info(`Storage path: ${config.storagePath}`);
+  logger.info(`=================================================`);
 });
 
 // Handle graceful shutdown
