@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getReviewStore } from '@/lib/review-store';
 import { parseReviewText } from '@/lib/text-parser';
+import { CodeReviewResponse } from '@/lib/prompts';
 
 export const maxDuration = 30;
 
@@ -11,7 +12,7 @@ interface ResultResponse {
   reviewId: string;
   status: string;
   rawText: string;
-  parsedResponse?: Record<string, any>;
+  parsedResponse?: CodeReviewResponse;
   parseError?: string;
   error?: string;
   isComplete: boolean;

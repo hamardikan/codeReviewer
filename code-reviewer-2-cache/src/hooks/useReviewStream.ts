@@ -65,6 +65,25 @@ export function useReviewStream() {
   const isPollingRef = useRef(false);
   
   /**
+   * Cleans up a review from Redis after it's stored locally
+   * @param reviewId - The ID of the review to clean up
+   */
+  const cleanupReview = useCallback(async (reviewId: string) => {
+    try {
+      await fetch('/api/review/cleanup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reviewId })
+      });
+      
+      console.log(`[Client] Cleaned up review ${reviewId} from Redis`);
+    } catch (error) {
+      console.error(`[Client] Error cleaning up review ${reviewId}:`, error);
+      // Non-critical error, don't update state
+    }
+  }, []);
+  
+  /**
    * Stops any active polling
    */
   const stopPolling = useCallback(() => {
@@ -75,6 +94,67 @@ export function useReviewStream() {
     isPollingRef.current = false;
     pollIntervalRef.current = INITIAL_POLL_INTERVAL;
   }, []);
+  
+  /**
+   * Fetches the final result of a review
+   * @param reviewId - The ID of the review
+   */
+  const fetchFinalResult = useCallback(async (reviewId: string) => {
+    try {
+      const response = await fetch(`/api/review/result?id=${reviewId}`);
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(`Failed to get review result: ${response.status} - ${errorData?.error || 'Unknown error'}`);
+      }
+      
+      const resultData = await response.json();
+      
+      setReviewState(prev => {
+        const status = resultData.error ? 'error' : 
+                     resultData.parseError ? 'repairing' : 
+                     'completed';
+        
+        // Get the parse result, or keep existing one
+        const parsed = resultData.parsedResponse || prev.parsed;
+        
+        // If completed successfully, save to local storage
+        if (status === 'completed' && reviewId) {
+          const storedReview = createStorableReview(
+            reviewId,
+            parsed,
+            prev.language.id,
+            prev.filename
+          );
+          addReview(storedReview);
+          
+          // Clean up the Redis cache
+          cleanupReview(reviewId).catch(err => 
+            console.error('Error cleaning up review:', err)
+          );
+        }
+        
+        return {
+          ...prev,
+          status,
+          rawText: resultData.rawText || prev.rawText,
+          parsed,
+          parseError: resultData.parseError || null,
+          error: resultData.error || null,
+          progress: 100
+        };
+      });
+    } catch (error) {
+      console.error('Error fetching final result:', error);
+      
+      setReviewState(prev => ({ 
+        ...prev, 
+        status: 'error', 
+        error: error instanceof Error ? error.message : 'Unknown error fetching result',
+        progress: 100
+      }));
+    }
+  }, [cleanupReview]); // Added cleanupReview as a dependency
   
   /**
    * Polls the status of a review
@@ -162,87 +242,7 @@ export function useReviewStream() {
       
       stopPolling();
     }
-  }, [stopPolling]);
-  
-  /**
-   * Fetches the final result of a review
-   * @param reviewId - The ID of the review
-   */
-  const fetchFinalResult = useCallback(async (reviewId: string) => {
-    try {
-      const response = await fetch(`/api/review/result?id=${reviewId}`);
-      
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(`Failed to get review result: ${response.status} - ${errorData?.error || 'Unknown error'}`);
-      }
-      
-      const resultData = await response.json();
-      
-      setReviewState(prev => {
-        const status = resultData.error ? 'error' : 
-                     resultData.parseError ? 'repairing' : 
-                     'completed';
-        
-        // Get the parse result, or keep existing one
-        const parsed = resultData.parsedResponse || prev.parsed;
-        
-        // If completed successfully, save to local storage
-        if (status === 'completed' && reviewId) {
-          const storedReview = createStorableReview(
-            reviewId,
-            parsed,
-            prev.language.id,
-            prev.filename
-          );
-          addReview(storedReview);
-          
-          // Clean up the Redis cache
-          cleanupReview(reviewId).catch(err => 
-            console.error('Error cleaning up review:', err)
-          );
-        }
-        
-        return {
-          ...prev,
-          status,
-          rawText: resultData.rawText || prev.rawText,
-          parsed,
-          parseError: resultData.parseError || null,
-          error: resultData.error || null,
-          progress: 100
-        };
-      });
-    } catch (error) {
-      console.error('Error fetching final result:', error);
-      
-      setReviewState(prev => ({ 
-        ...prev, 
-        status: 'error', 
-        error: error instanceof Error ? error.message : 'Unknown error fetching result',
-        progress: 100
-      }));
-    }
-  }, []);
-  
-  /**
-   * Cleans up a review from Redis after it's stored locally
-   * @param reviewId - The ID of the review to clean up
-   */
-  const cleanupReview = useCallback(async (reviewId: string) => {
-    try {
-      await fetch('/api/review/cleanup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reviewId })
-      });
-      
-      console.log(`[Client] Cleaned up review ${reviewId} from Redis`);
-    } catch (error) {
-      console.error(`[Client] Error cleaning up review ${reviewId}:`, error);
-      // Non-critical error, don't update state
-    }
-  }, []);
+  }, [stopPolling, fetchFinalResult]); // Added fetchFinalResult as a dependency
   
   /**
    * Starts a new code review
