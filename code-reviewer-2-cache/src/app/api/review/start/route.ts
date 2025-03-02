@@ -1,7 +1,8 @@
 import { nanoid } from 'nanoid';
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { getGeminiClient } from '@/lib/gemini-client';
 import { createCodeReviewPrompt } from '@/lib/prompts';
+import { getReviewStore, ReviewStatus } from '@/lib/review-store';
 
 export const maxDuration = 60;
 
@@ -15,108 +16,121 @@ interface StartReviewRequest {
 }
 
 /**
- * POST handler for starting a new review with streaming response
- * @param request - The HTTP request
- * @returns Streaming response with review chunks
+ * Response interface for starting a review
  */
-export async function POST(request: NextRequest) {
-  const encoder = new TextEncoder();
-  
+interface StartReviewResponse {
+  reviewId: string;
+  status: string;
+}
+
+/**
+ * Background processing for code review
+ * This function handles the asynchronous processing of the code review
+ * @param reviewId - The ID of the review
+ * @param code - The code to review
+ * @param language - The programming language
+ */
+async function processReviewInBackground(
+  reviewId: string,
+  code: string,
+  language: string
+): Promise<void> {
+  try {
+    // Get the review store
+    const reviewStore = getReviewStore();
+    
+    // Update status to processing
+    await reviewStore.updateStatus(reviewId, ReviewStatus.PROCESSING);
+    
+    // Create the Gemini client
+    const geminiClient = getGeminiClient();
+    
+    // Create the prompt for the code review
+    const prompt = createCodeReviewPrompt(code, language);
+    
+    // Process the response in chunks
+    let chunkCount = 0;
+    
+    for await (const chunk of geminiClient.streamResponse(prompt)) {
+      // Append each chunk to the review
+      await reviewStore.appendChunk(reviewId, chunk);
+      
+      chunkCount++;
+      if (chunkCount % 10 === 0) {
+        console.log(`[Background] Processed ${chunkCount} chunks for review ${reviewId}`);
+      }
+    }
+    
+    // Update status to completed
+    await reviewStore.updateStatus(reviewId, ReviewStatus.COMPLETED);
+    
+    console.log(`[Background] Completed review ${reviewId} with ${chunkCount} chunks`);
+  } catch (error) {
+    console.error(`[Background] Error processing review ${reviewId}:`, error);
+    
+    // Update status to error
+    const reviewStore = getReviewStore();
+    await reviewStore.updateStatus(
+      reviewId, 
+      ReviewStatus.ERROR, 
+      error instanceof Error ? error.message : 'Unknown error'
+    );
+  }
+}
+
+/**
+ * POST handler for starting a new review
+ * @param request - The HTTP request
+ * @returns Response with review ID and status
+ */
+export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
     // Parse request body
     const body = await request.json() as StartReviewRequest;
     
     // Validate request
     if (!body.code || typeof body.code !== 'string') {
-      return new Response(
-        JSON.stringify({ error: 'Code is required and must be a string' }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      return NextResponse.json(
+        { error: 'Code is required and must be a string' },
+        { status: 400 }
       );
     }
     
     // Generate a unique ID for this review
     const reviewId = nanoid();
-    console.log(`[API] Starting streaming review with ID: ${reviewId}, language: ${body.language || 'javascript'}`);
+    console.log(`[API] Starting review with ID: ${reviewId}, language: ${body.language || 'javascript'}`);
     
-    // Create a new readable stream
-    const stream = new ReadableStream({
-      async start(controller) {
-        try {
-          // Send the initial metadata with the reviewId
-          const metadata = {
-            event: 'metadata',
-            reviewId,
-            timestamp: Date.now()
-          };
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(metadata)}\n\n`));
-          
-          // Create the Gemini client
-          const geminiClient = getGeminiClient();
-          
-          // Create the prompt for the code review
-          const prompt = createCodeReviewPrompt(body.code, body.language || 'javascript');
-          
-          // Stream the response chunks directly to the client
-          let chunkCount = 0;
-          for await (const chunk of geminiClient.streamResponse(prompt)) {
-            // Create a data event with the chunk
-            const data = {
-              event: 'chunk',
-              data: chunk
-            };
-            controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
-            
-            chunkCount++;
-            if (chunkCount % 10 === 0) {
-              console.log(`[API] Streamed ${chunkCount} chunks for review ${reviewId}`);
-            }
-          }
-          
-          // Send completion event
-          const completion = {
-            event: 'complete',
-            timestamp: Date.now()
-          };
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(completion)}\n\n`));
-          
-          console.log(`[API] Completed streaming review ${reviewId} with ${chunkCount} chunks`);
-          
-          // Close the stream
-          controller.close();
-        } catch (error) {
-          console.error('[API] Error in streaming response:', error);
-          
-          // Send error event
-          const errorEvent = {
-            event: 'error',
-            error: error instanceof Error ? error.message : 'Unknown error',
-            timestamp: Date.now()
-          };
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify(errorEvent)}\n\n`));
-          
-          // Close the stream
-          controller.close();
-        }
-      }
-    });
+    // Initialize the review in Redis
+    const reviewStore = getReviewStore();
+    await reviewStore.storeReview(
+      reviewId,
+      ReviewStatus.QUEUED,
+      [],
+      body.language,
+      body.filename
+    );
     
-    // Return the stream as a Server-Sent Events response
-    return new Response(stream, {
-      headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive'
-      }
-    });
+    // Start background processing
+    // We deliberately don't await this to return quickly
+    processReviewInBackground(reviewId, body.code, body.language || 'javascript')
+      .catch(err => console.error(`[API] Background processing error for ${reviewId}:`, err));
+    
+    // Return immediately with the review ID
+    const response: StartReviewResponse = {
+      reviewId,
+      status: ReviewStatus.QUEUED
+    };
+    
+    return NextResponse.json(response);
   } catch (error) {
     console.error('[API] Error starting review:', error);
     
-    return new Response(
-      JSON.stringify({ 
+    return NextResponse.json(
+      { 
         error: 'Failed to start review',
         message: error instanceof Error ? error.message : 'Unknown error'
-      }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } }
+      },
+      { status: 500 }
     );
   }
 }
