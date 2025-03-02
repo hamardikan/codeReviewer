@@ -1,5 +1,4 @@
-// hooks/useReviewStream.ts
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import { parseReviewText } from '@/lib/text-parser';
 import { CodeReviewResponse } from '@/lib/prompts';
 import { ReviewStatus } from '@/lib/review-store';
@@ -32,7 +31,7 @@ export interface ReviewState {
 }
 
 /**
- * Custom hook for managing the review streaming process
+ * Custom hook for managing direct streaming of reviews
  * @returns An object with the review state and control functions
  */
 export function useReviewStream() {
@@ -49,11 +48,12 @@ export function useReviewStream() {
     error: null,
     language: { id: 'javascript', name: 'JavaScript', extensions: ['js'], setup: () => {} }
   });
-
-  const [pollDelay, setPollDelay] = useState(500);
+  
+  // Reference to the current reader to allow cancellation
+  const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
   
   /**
-   * Starts a new code review
+   * Starts a new code review with streaming response
    * @param code - The code to review
    * @param language - The programming language
    * @param filename - Optional filename
@@ -63,6 +63,16 @@ export function useReviewStream() {
     language: Language,
     filename?: string
   ) => {
+    // Cancel any existing stream
+    if (readerRef.current) {
+      try {
+        await readerRef.current.cancel();
+      } catch (e) {
+        // Ignore cancellation errors
+      }
+      readerRef.current = null;
+    }
+    
     // Reset state
     setReviewState({
       reviewId: null,
@@ -80,7 +90,9 @@ export function useReviewStream() {
     });
     
     try {
-      // Start the review process
+      console.log(`[Client] Starting review for ${filename || 'unnamed code'}, language: ${language.id}`);
+      
+      // Create the request
       const response = await fetch('/api/review/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -91,23 +103,122 @@ export function useReviewStream() {
         })
       });
       
-      if (!response.ok) {
-        throw new Error(`Failed to start review: ${response.status}`);
+      if (!response.ok || !response.body) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(`Failed to start review: ${response.status} - ${errorData?.error || 'Unknown error'}`);
       }
       
-      const { reviewId } = await response.json();
-      
-      // Update state with review ID
-      setReviewState(prev => ({ 
-        ...prev, 
-        reviewId, 
-        status: 'streaming' 
+      // Set streaming status
+      setReviewState(prev => ({
+        ...prev,
+        status: 'streaming'
       }));
       
-      // Reset polling delay to initial value
-      setPollDelay(500);
+      // Set up the event source reader
+      const reader = response.body.getReader();
+      readerRef.current = reader;
       
+      const decoder = new TextDecoder();
+      let buffer = '';
+      
+      // Process the stream
+      try {
+        while (true) {
+          const { done, value } = await reader.read();
+          
+          if (done) {
+            console.log('[Client] Stream complete');
+            break;
+          }
+          
+          // Decode the chunk and add to buffer
+          buffer += decoder.decode(value, { stream: true });
+          
+          // Process complete events in the buffer
+          const events = buffer.split('\n\n');
+          buffer = events.pop() || ''; // Keep the last incomplete event in the buffer
+          
+          for (const event of events) {
+            if (!event.startsWith('data: ')) continue;
+            
+            try {
+              // Parse the event data
+              const jsonData = JSON.parse(event.slice(6));
+              
+              // Handle different event types
+              switch (jsonData.event) {
+                case 'metadata':
+                  console.log(`[Client] Received metadata for review: ${jsonData.reviewId}`);
+                  setReviewState(prev => ({
+                    ...prev,
+                    reviewId: jsonData.reviewId
+                  }));
+                  break;
+                  
+                case 'chunk':
+                  console.log(`[Client] Received chunk: ${jsonData.data.length} chars`);
+                  
+                  setReviewState(prev => {
+                    const newRawText = prev.rawText + jsonData.data;
+                    const parsedResult = parseReviewText(newRawText);
+                    
+                    return {
+                      ...prev,
+                      rawText: newRawText,
+                      parsed: parsedResult.success && parsedResult.result ? parsedResult.result : prev.parsed,
+                      parseError: parsedResult.error || null
+                    };
+                  });
+                  break;
+                  
+                case 'complete':
+                  console.log('[Client] Received completion event');
+                  
+                  setReviewState(prev => {
+                    // If we have a parse error, mark for repair
+                    if (prev.parseError) {
+                      console.log('[Client] Parse error detected, needs repair');
+                      return { ...prev, status: 'repairing' };
+                    }
+                    
+                    // Otherwise mark as completed and save to local storage
+                    console.log('[Client] Review completed successfully');
+                    
+                    if (prev.reviewId) {
+                      const storedReview = createStorableReview(
+                        prev.reviewId,
+                        prev.parsed,
+                        prev.language.id,
+                        prev.filename
+                      );
+                      addReview(storedReview);
+                    }
+                    
+                    return { ...prev, status: 'completed' };
+                  });
+                  break;
+                  
+                case 'error':
+                  console.error('[Client] Received error event:', jsonData.error);
+                  
+                  setReviewState(prev => ({ 
+                    ...prev, 
+                    status: 'error', 
+                    error: jsonData.error || 'Unknown error occurred during review'
+                  }));
+                  break;
+              }
+            } catch (error) {
+              console.error('[Client] Error parsing event data:', error, event);
+            }
+          }
+        }
+      } finally {
+        readerRef.current = null;
+      }
     } catch (error) {
+      console.error('[Client] Error during review:', error);
+      
       setReviewState(prev => ({ 
         ...prev, 
         status: 'error', 
@@ -115,7 +226,7 @@ export function useReviewStream() {
       }));
     }
   }, []);
-  
+
   /**
    * Attempts to repair a malformed response
    */
@@ -123,6 +234,8 @@ export function useReviewStream() {
     if (!reviewState.rawText || !reviewState.parseError || !reviewState.reviewId) return;
     
     try {
+      console.log('[Client] Attempting to repair malformed response');
+      
       setReviewState(prev => ({ 
         ...prev, 
         status: 'repairing' 
@@ -144,6 +257,8 @@ export function useReviewStream() {
       const data = await response.json();
       
       if (data.success) {
+        console.log('[Client] Successfully repaired parsing issues');
+        
         setReviewState(prev => ({
           ...prev,
           status: 'completed',
@@ -163,6 +278,8 @@ export function useReviewStream() {
         throw new Error(data.error || 'Failed to repair parsing');
       }
     } catch (error) {
+      console.error('[Client] Error repairing response:', error);
+      
       setReviewState(prev => ({ 
         ...prev, 
         status: 'error',
@@ -206,115 +323,6 @@ export function useReviewStream() {
       };
     });
   }, []);
-  
-  // Polling effect for streaming chunks
-  useEffect(() => {
-    // Only poll if we're in streaming state and have a reviewId
-    if (reviewState.status !== 'streaming' || !reviewState.reviewId) {
-      return;
-    }
-    
-    let isMounted = true;
-    let lastChunkId = -1;
-    
-    const pollForChunks = async () => {
-      if (!isMounted || !reviewState.reviewId) return;
-      
-      try {
-        const response = await fetch(
-          `/api/review/chunks?id=${reviewState.reviewId}&lastChunk=${lastChunkId}`
-        );
-        
-        if (!response.ok) {
-          throw new Error(`Failed to fetch chunks: ${response.status}`);
-        }
-        
-        const data = await response.json();
-        
-        if (!isMounted) return;
-        
-        // Process new chunks if any
-        if (data.chunks.length > 0) {
-          setReviewState(prev => {
-            const newRawText = prev.rawText + data.chunks.join('');
-            const parsedResult = parseReviewText(newRawText);
-            
-            return {
-              ...prev,
-              rawText: newRawText,
-              parsed: parsedResult.success && parsedResult.result ? parsedResult.result : prev.parsed,
-              parseError: parsedResult.error || null
-            };
-          });
-          
-          lastChunkId += data.chunks.length;
-        }
-        
-        // Check if review is complete
-        if (data.isComplete) {
-          if (data.status === ReviewStatus.ERROR) {
-            setReviewState(prev => ({ 
-              ...prev, 
-              status: 'error', 
-              error: data.error || 'Unknown error during review processing'
-            }));
-          } else {
-            // If we have a parse error, try repair
-            if (reviewState.parseError) {
-              void repairParsing();
-            } else {
-              setReviewState(prev => ({ 
-                ...prev, 
-                status: 'completed' 
-              }));
-              
-              // Save to localStorage if parsing was successful
-              if (!reviewState.parseError && reviewState.reviewId) {
-                const storedReview = createStorableReview(
-                  reviewState.reviewId,
-                  reviewState.parsed,
-                  reviewState.language.id,
-                  reviewState.filename
-                );
-                addReview(storedReview);
-              }
-            }
-          }
-        } else {
-          // Continue polling with exponential backoff
-          const nextDelay = Math.min(pollDelay * 1.5, 5000);
-          setPollDelay(nextDelay);
-          setTimeout(pollForChunks, nextDelay);
-        }
-      } catch (error) {
-        if (!isMounted) return;
-        
-        setReviewState(prev => ({ 
-          ...prev, 
-          status: 'error', 
-          error: error instanceof Error ? error.message : 'Unknown error during polling'
-        }));
-      }
-    };
-    
-    // Start polling
-    void pollForChunks();
-    
-    // Cleanup function
-    return () => {
-      isMounted = false;
-    };
-  }, [
-    reviewState.status, 
-    reviewState.reviewId, 
-    pollDelay, 
-    repairParsing, 
-    reviewState.parseError, 
-    reviewState.parsed,
-    reviewState.rawText,
-    reviewState.language.id,
-    reviewState.filename
-  ]);
   
   return {
     reviewState,

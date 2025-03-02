@@ -49,6 +49,10 @@ export function parseReviewText(rawText: string): ParseResult {
 
       // The split result has format: [preceding text, lineNum, content, lineNum, content, ...]
       // Start from index 1 (first line number) and process in pairs
+      
+      // Keep track of seen suggestions to deduplicate
+      const seenSuggestions = new Map<string, boolean>();
+      
       for (let i = 1; i < suggestionBlocks.length; i += 2) {
         if (i + 1 >= suggestionBlocks.length) break;
         
@@ -73,14 +77,26 @@ export function parseReviewText(rawText: string): ParseResult {
         );
         
         if (originalMatch && suggestedMatch) {
-          result.suggestions.push({
-            id: nanoid(),
-            lineNumber,
-            originalCode: originalMatch[1].trim(),
-            suggestedCode: suggestedMatch[1].trim(),
-            explanation: explanationMatch ? explanationMatch[1].trim() : '',
-            accepted: null
-          });
+          const originalCode = originalMatch[1].trim();
+          const suggestedCode = suggestedMatch[1].trim();
+          
+          // Create a unique key based on line number, original code, and suggested code
+          // This helps identify duplicate suggestions
+          const suggestionKey = `${lineNumber}:${originalCode}:${suggestedCode}`;
+          
+          // Only add if we haven't seen this exact suggestion before
+          if (!seenSuggestions.has(suggestionKey)) {
+            seenSuggestions.set(suggestionKey, true);
+            
+            result.suggestions.push({
+              id: nanoid(),
+              lineNumber,
+              originalCode,
+              suggestedCode,
+              explanation: explanationMatch ? explanationMatch[1].trim() : '',
+              accepted: null
+            });
+          }
         }
       }
     }
@@ -146,6 +162,9 @@ export function repairWithRegex(rawText: string): ParseResult {
     // Look for suggestion patterns - any numbered or bulleted list with code
     const suggestionMatches = [...rawText.matchAll(/(?:[-*\d]+[.)]\s*|(?:issue|problem|suggestion)\s*\d+:?\s*)([^]*?)(?=(?:[-*\d]+[.)]\s*|(?:issue|problem|suggestion)\s*\d+:?\s*)|clean\s*code|improved\s*code|fixed\s*code|$)/gi)];
     
+    // Keep track of seen suggestions to deduplicate
+    const seenSuggestions = new Map<string, boolean>();
+    
     let suggestionIndex = 0;
     for (const match of suggestionMatches) {
       suggestionIndex++;
@@ -167,14 +186,22 @@ export function repairWithRegex(rawText: string): ParseResult {
           .replace(/```\w*\n?|```|`/g, '')
           .trim();
           
-        result.suggestions.push({
-          id: nanoid(),
-          lineNumber: suggestionIndex, // Use index if we can't determine line number
-          originalCode,
-          suggestedCode,
-          explanation,
-          accepted: null
-        });
+        // Create a unique key based on original code and suggested code
+        const suggestionKey = `${originalCode}:${suggestedCode}`;
+        
+        // Only add if we haven't seen this exact suggestion before
+        if (!seenSuggestions.has(suggestionKey)) {
+          seenSuggestions.set(suggestionKey, true);
+          
+          result.suggestions.push({
+            id: nanoid(),
+            lineNumber: suggestionIndex, // Use index if we can't determine line number
+            originalCode,
+            suggestedCode,
+            explanation,
+            accepted: null
+          });
+        }
       }
     }
 

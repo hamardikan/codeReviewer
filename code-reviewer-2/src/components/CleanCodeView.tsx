@@ -27,44 +27,82 @@ export default function CleanCodeView({
   
   // Generate custom code based on accepted suggestions
   useEffect(() => {
-    if (!originalCode) return;
+    // If clean code is empty, reset custom code and return
+    if (!cleanCode.trim()) {
+      setCustomCode('');
+      return;
+    }
+    
+    // If no original code is provided, use clean code as fallback
+    if (!originalCode) {
+      setCustomCode(cleanCode);
+      return;
+    }
+    
+    // Check if we have any accepted suggestions
+    const acceptedSuggestions = suggestions.filter(s => s.accepted === true);
+    
+    if (acceptedSuggestions.length === 0) {
+      // If no accepted suggestions, use the original code
+      setCustomCode(originalCode);
+      return;
+    }
     
     // Start with the original code
     let result = originalCode;
     
+    // Track applied changes to avoid conflicts
+    const modifiedLines = new Set<number>();
+    
     // Sort suggestions by line number in descending order to avoid offset issues
     // when making replacements from bottom to top
-    const sortedSuggestions = [...suggestions]
-      .filter(s => s.accepted === true)
+    const sortedSuggestions = [...acceptedSuggestions]
       .sort((a, b) => b.lineNumber - a.lineNumber);
     
     // Apply each accepted suggestion
     for (const suggestion of sortedSuggestions) {
+      // Skip if we've already modified this line
+      if (modifiedLines.has(suggestion.lineNumber)) continue;
+      
       const lines = result.split('\n');
       
-      // Make sure line number is valid
-      if (suggestion.lineNumber > 0 && suggestion.lineNumber <= lines.length) {
-        // Find and replace the original code with the suggested one
-        // We'll look for exact matches of the original code
-        const lineIndex = suggestion.lineNumber - 1;
-        const originalLine = lines[lineIndex];
+      // Skip if line number is invalid
+      if (suggestion.lineNumber <= 0 || suggestion.lineNumber > lines.length) continue;
+      
+      // Get line index (0-based)
+      const lineIndex = suggestion.lineNumber - 1;
+      const originalLine = lines[lineIndex];
+      
+      // Try to locate the exact code within the line
+      if (originalLine.includes(suggestion.originalCode.trim())) {
+        lines[lineIndex] = originalLine.replace(
+          suggestion.originalCode.trim(), 
+          suggestion.suggestedCode.trim()
+        );
+        modifiedLines.add(suggestion.lineNumber);
+      } else {
+        // If exact match fails, try a more flexible approach
+        // This handles cases where whitespace or indentation differs
+        const trimmedOriginal = suggestion.originalCode.trim();
+        const trimmedLine = originalLine.trim();
         
-        if (originalLine.includes(suggestion.originalCode.trim())) {
-          lines[lineIndex] = originalLine.replace(
-            suggestion.originalCode.trim(), 
-            suggestion.suggestedCode.trim()
-          );
+        if (trimmedLine === trimmedOriginal || trimmedLine.includes(trimmedOriginal)) {
+          // Preserve indentation
+          const indentation = originalLine.match(/^\s*/)?.[0] || '';
+          lines[lineIndex] = indentation + suggestion.suggestedCode.trim();
+          modifiedLines.add(suggestion.lineNumber);
         } else {
-          // Fallback: just replace the entire line
-          lines[lineIndex] = suggestion.suggestedCode;
+          // Last resort: replace the whole line
+          lines[lineIndex] = suggestion.suggestedCode.trim();
+          modifiedLines.add(suggestion.lineNumber);
         }
-        
-        result = lines.join('\n');
       }
+      
+      result = lines.join('\n');
     }
     
     setCustomCode(result);
-  }, [originalCode, suggestions]);
+  }, [originalCode, suggestions, cleanCode]);
   
   const copyToClipboard = async (textToCopy: string) => {
     try {
@@ -90,11 +128,13 @@ export default function CleanCodeView({
     );
   }
   
-  if (!cleanCode && !customCode) {
+  const codeToDisplay = showMode === 'ai' ? cleanCode : customCode;
+  
+  if (!codeToDisplay) {
     return (
       <div className="text-center py-10 border border-gray-200 rounded-lg">
         <Code className="h-8 w-8 text-gray-400 mx-auto mb-4" />
-        <p className="text-gray-600">No clean code available yet.</p>
+        <p className="text-gray-600">No code available yet.</p>
       </div>
     );
   }
@@ -134,7 +174,7 @@ export default function CleanCodeView({
           )}
         </div>
         <button
-          onClick={() => copyToClipboard(showMode === 'ai' ? cleanCode : customCode)}
+          onClick={() => copyToClipboard(codeToDisplay)}
           className="p-1.5 rounded-md hover:bg-gray-200 transition-colors flex items-center text-sm"
           title="Copy code"
         >
@@ -159,7 +199,7 @@ export default function CleanCodeView({
           customStyle={{ margin: 0, maxHeight: '70vh' }}
           showLineNumbers={true}
         >
-          {showMode === 'ai' ? cleanCode : customCode}
+          {codeToDisplay}
         </SyntaxHighlighter>
       </div>
       
@@ -167,7 +207,11 @@ export default function CleanCodeView({
         <div className="bg-gray-50 px-4 py-2 border-t border-gray-200 text-sm text-gray-600">
           <div className="flex items-center">
             <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
-            <span>Code updated with {acceptedCount} accepted suggestion{acceptedCount !== 1 ? 's' : ''}</span>
+            <span>
+              {acceptedCount > 0 
+                ? `Code updated with ${acceptedCount} accepted suggestion${acceptedCount !== 1 ? 's' : ''}`
+                : 'No suggestions have been accepted yet'}
+            </span>
           </div>
         </div>
       )}

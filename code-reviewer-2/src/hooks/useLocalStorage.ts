@@ -8,22 +8,24 @@ import { useState, useEffect } from 'react';
  */
 export function useLocalStorage<T>(key: string, initialValue: T): [T, (value: T | ((val: T) => T)) => void] {
   // State to store our value
-  const [storedValue, setStoredValue] = useState<T>(() => {
-    if (typeof window === 'undefined') {
-      return initialValue;
-    }
-    
+  // Pass initial state function to useState so logic is only executed once
+  const [storedValue, setStoredValue] = useState<T>(initialValue);
+  
+  // Initialize on client-side only
+  useEffect(() => {
     try {
       // Get from local storage by key
       const item = window.localStorage.getItem(key);
       
       // Parse stored json or return initialValue if none
-      return item ? JSON.parse(item) : initialValue;
+      const value = item ? JSON.parse(item) : initialValue;
+      
+      setStoredValue(value);
     } catch (error) {
       console.error(`Error reading localStorage key "${key}":`, error);
-      return initialValue;
+      setStoredValue(initialValue);
     }
-  });
+  }, [key, initialValue]);
   
   // Return a wrapped version of useState's setter function that
   // persists the new value to localStorage
@@ -49,7 +51,14 @@ export function useLocalStorage<T>(key: string, initialValue: T): [T, (value: T 
   useEffect(() => {
     function handleStorageChange(event: StorageEvent) {
       if (event.key === key && event.newValue) {
-        setStoredValue(JSON.parse(event.newValue));
+        try {
+          const newValue = JSON.parse(event.newValue);
+          if (JSON.stringify(newValue) !== JSON.stringify(storedValue)) {
+            setStoredValue(newValue);
+          }
+        } catch (e) {
+          console.error(`Error parsing storage event for key "${key}":`, e);
+        }
       }
     }
     
@@ -59,7 +68,9 @@ export function useLocalStorage<T>(key: string, initialValue: T): [T, (value: T 
         window.removeEventListener('storage', handleStorageChange);
       };
     }
-  }, [key]);
+    
+    return undefined;
+  }, [key, storedValue]);
   
   return [storedValue, setValue];
 }

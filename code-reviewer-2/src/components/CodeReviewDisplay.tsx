@@ -12,7 +12,7 @@ interface CodeReviewDisplayProps {
   reviewState: ReviewState;
   onUpdateSuggestion: (suggestionId: string, accepted: boolean | null) => void;
   onRepairParsing: () => void;
-  originalCode?: string; // Add this new prop
+  originalCode?: string;
 }
 
 export default function CodeReviewDisplay({
@@ -49,6 +49,7 @@ export default function CodeReviewDisplay({
             {activeTab === 'clean-code' && (
               <CleanCodeView 
                 cleanCode={reviewState.parsed.cleanCode || 'Generating improved code...'}
+                originalCode={originalCode}
                 isLoading={!reviewState.parsed.cleanCode}
                 suggestions={reviewState.parsed.suggestions}
                 languageId={reviewState.language?.id}

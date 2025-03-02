@@ -1,9 +1,9 @@
 'use client';
 
-import React from 'react';
+import React, { useState } from 'react';
 import { formatDistance } from 'date-fns';
-import { Clock, Code, ChevronRight, RefreshCw } from 'lucide-react';
-import { StoredReview } from '@/lib/storage-utils';
+import { Clock, Code, ChevronRight, RefreshCw, Trash2, X, AlertTriangle } from 'lucide-react';
+import { StoredReview, removeReview } from '@/lib/storage-utils';
 
 interface ReviewHistoryProps {
   reviews: StoredReview[];
@@ -12,6 +12,39 @@ interface ReviewHistoryProps {
 }
 
 export default function ReviewHistory({ reviews, onSelectReview, onRefresh }: ReviewHistoryProps) {
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [deleteInProgress, setDeleteInProgress] = useState(false);
+
+  const handleDeleteClick = (e: React.MouseEvent, reviewId: string) => {
+    e.stopPropagation(); // Prevent triggering the parent onClick
+    setConfirmDelete(reviewId);
+  };
+
+  const handleCancelDelete = (e: React.MouseEvent) => {
+    e.stopPropagation(); // Prevent triggering the parent onClick
+    setConfirmDelete(null);
+  };
+
+  const handleConfirmDelete = async (e: React.MouseEvent, reviewId: string) => {
+    e.stopPropagation(); // Prevent triggering the parent onClick
+    setDeleteInProgress(true);
+    
+    try {
+      // Remove the review from storage
+      removeReview(reviewId);
+      
+      // Refresh the list
+      if (onRefresh) {
+        onRefresh();
+      }
+    } catch (error) {
+      console.error('Error deleting review:', error);
+    } finally {
+      setDeleteInProgress(false);
+      setConfirmDelete(null);
+    }
+  };
+
   if (reviews.length === 0) {
     return (
       <div className="text-center py-12 border-2 border-dashed border-gray-200 rounded-lg">
@@ -68,7 +101,7 @@ export default function ReviewHistory({ reviews, onSelectReview, onRefresh }: Re
         {reviews.map(review => (
           <div 
             key={review.id} 
-            className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50 transition-colors cursor-pointer"
+            className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50 transition-colors cursor-pointer relative"
             onClick={() => onSelectReview(review)}
           >
             <div className="flex justify-between items-center">
@@ -87,9 +120,50 @@ export default function ReviewHistory({ reviews, onSelectReview, onRefresh }: Re
                   )}
                 </div>
               </div>
-              <div className="flex items-center text-gray-500 hover:text-green-600">
-                <span className="text-sm mr-1">View</span>
-                <ChevronRight className="h-4 w-4" />
+              
+              <div className="flex items-center">
+                {confirmDelete === review.id ? (
+                  <div 
+                    className="flex items-center space-x-2 bg-red-50 p-1 rounded"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <span className="text-xs text-red-600">Delete?</span>
+                    <button
+                      onClick={(e) => handleConfirmDelete(e, review.id)}
+                      className="p-1 rounded hover:bg-red-100 text-red-600"
+                      disabled={deleteInProgress}
+                      title="Confirm delete"
+                    >
+                      {deleteInProgress ? (
+                        <RefreshCw className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <AlertTriangle className="h-4 w-4" />
+                      )}
+                    </button>
+                    <button
+                      onClick={handleCancelDelete}
+                      className="p-1 rounded hover:bg-gray-200 text-gray-600"
+                      disabled={deleteInProgress}
+                      title="Cancel"
+                    >
+                      <X className="h-4 w-4" />
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    <button
+                      onClick={(e) => handleDeleteClick(e, review.id)}
+                      className="p-1.5 rounded-full hover:bg-red-100 text-gray-500 hover:text-red-600 mr-2"
+                      title="Delete review"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                    <div className="flex items-center text-gray-500 hover:text-green-600">
+                      <span className="text-sm mr-1">View</span>
+                      <ChevronRight className="h-4 w-4" />
+                    </div>
+                  </>
+                )}
               </div>
             </div>
             

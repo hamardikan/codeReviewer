@@ -27,8 +27,10 @@
     "@types/react-syntax-highlighter": "^15.5.13",
     "@uiw/codemirror-theme-vscode": "^4.23.9",
     "@uiw/react-codemirror": "^4.23.9",
+    "@vercel/kv": "^3.0.0",
     "date-fns": "^4.1.0",
     "detect-language": "^2.1.0",
+    "fs": "^0.0.1-security",
     "lucide-react": "^0.477.0",
     "lz-string": "^1.5.0",
     "nanoid": "^5.1.2",
@@ -37,6 +39,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-syntax-highlighter": "^15.6.1",
+    "redis": "^4.7.0",
     "zustand": "^5.0.3"
   },
   "devDependencies": {
@@ -45,6 +48,7 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/redis": "^4.0.10",
     "eslint": "^9",
     "eslint-config-next": "15.2.0",
     "tailwindcss": "^4",

@@ -12,11 +12,18 @@ import { getLanguageById, LANGUAGES } from '@/lib/language-utils';
 export default function Home() {
   const { reviewState, startReview, updateSuggestion, repairParsing } = useReviewStream();
   const [activeTab, setActiveTab] = useState('new-review');
-  const [reviews, setReviews] = useState<StoredReview[]>(() => loadReviews());
+  const [reviews, setReviews] = useState<StoredReview[]>([]);
   const [selectedHistoryReview, setSelectedHistoryReview] = useState<StoredReview | null>(null);
+  const [originalCode, setOriginalCode] = useState<string>('');
+  
+  // Load reviews on client-side only
+  useEffect(() => {
+    setReviews(loadReviews());
+  }, []);
   
   // Start a code review
   const handleSubmitCode = (code: string, language: any, filename?: string) => {
+    setOriginalCode(code); // Store the original code
     startReview(code, language, filename);
     setActiveTab('review');
     setSelectedHistoryReview(null);
@@ -116,6 +123,7 @@ export default function Home() {
               reviewState={reviewState}
               onUpdateSuggestion={updateSuggestion}
               onRepairParsing={repairParsing}
+              originalCode={originalCode}
             />
           ) : (
             // No review selected

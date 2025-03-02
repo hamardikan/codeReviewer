@@ -23,28 +23,16 @@ export interface ReviewData {
   parsedResponse?: CodeReviewResponse;
 }
 
+// Object to hold reviews for the current session
+// This will only persist for the duration of the server process
+const sessionReviews: Record<string, ReviewData> = {};
+
 /**
  * In-memory store for reviews
- * In a production app, this would be replaced with a database
+ * This version is designed specifically for serverless environments
  */
 class ReviewStore {
-  private reviews: Map<string, ReviewData>;
   private static instance: ReviewStore | null = null;
-  
-  /**
-   * Time in milliseconds after which reviews are considered stale
-   * and can be cleaned up (30 minutes)
-   */
-  private static CLEANUP_THRESHOLD = 30 * 60 * 1000;
-
-  /**
-   * Creates a new ReviewStore
-   */
-  private constructor() {
-    this.reviews = new Map<string, ReviewData>();
-    // Set up periodic cleanup to prevent memory leaks
-    setInterval(() => this.cleanupStaleReviews(), 5 * 60 * 1000); // Clean every 5 minutes
-  }
 
   /**
    * Gets the singleton instance of ReviewStore
@@ -79,7 +67,12 @@ class ReviewStore {
       lastUpdated: now
     };
     
-    this.reviews.set(reviewId, reviewData);
+    // Store the review in our session store
+    sessionReviews[reviewId] = reviewData;
+    
+    const reviewCount = Object.keys(sessionReviews).length;
+    console.log(`[ReviewStore] Stored review: ${reviewId}, Status: ${status}, Store size: ${reviewCount}`);
+    
     return reviewData;
   }
 
@@ -89,7 +82,28 @@ class ReviewStore {
    * @returns The review data or undefined if not found
    */
   public getReview(reviewId: string): ReviewData | undefined {
-    return this.reviews.get(reviewId);
+    const review = sessionReviews[reviewId];
+    
+    if (!review) {
+      const reviewCount = Object.keys(sessionReviews).length;
+      console.log(`[ReviewStore] Review not found: ${reviewId}, Store size: ${reviewCount}`);
+    }
+    
+    return review;
+  }
+
+  /**
+   * Returns all reviews in the store (for debugging purposes)
+   */
+  public getAllReviews(): ReviewData[] {
+    return Object.values(sessionReviews);
+  }
+
+  /**
+   * Lists the IDs of all reviews in the store
+   */
+  public getAllReviewIds(): string[] {
+    return Object.keys(sessionReviews);
   }
 
   /**
@@ -99,7 +113,7 @@ class ReviewStore {
    * @returns The updated review or undefined if review not found
    */
   public appendChunk(reviewId: string, chunk: string): ReviewData | undefined {
-    const review = this.reviews.get(reviewId);
+    const review = sessionReviews[reviewId];
     
     if (review) {
       review.chunks.push(chunk);
@@ -107,6 +121,7 @@ class ReviewStore {
       return review;
     }
     
+    console.log(`[ReviewStore] Cannot append chunk - review not found: ${reviewId}`);
     return undefined;
   }
 
@@ -122,7 +137,7 @@ class ReviewStore {
     status: ReviewStatus,
     error?: string
   ): ReviewData | undefined {
-    const review = this.reviews.get(reviewId);
+    const review = sessionReviews[reviewId];
     
     if (review) {
       review.status = status;
@@ -135,6 +150,7 @@ class ReviewStore {
       return review;
     }
     
+    console.log(`[ReviewStore] Cannot update status - review not found: ${reviewId}`);
     return undefined;
   }
 
@@ -148,7 +164,7 @@ class ReviewStore {
     reviewId: string,
     parsedResponse: CodeReviewResponse
   ): ReviewData | undefined {
-    const review = this.reviews.get(reviewId);
+    const review = sessionReviews[reviewId];
     
     if (review) {
       review.parsedResponse = parsedResponse;
@@ -156,33 +172,29 @@ class ReviewStore {
       return review;
     }
     
+    console.log(`[ReviewStore] Cannot update parsed response - review not found: ${reviewId}`);
     return undefined;
   }
 
   /**
-   * Removes old reviews to prevent memory leaks
-   * Only removes completed or error reviews older than the threshold
+   * Deletes a review by ID
+   * @param reviewId - The ID of the review to delete
+   * @returns True if successful, false if review not found
    */
-  private cleanupStaleReviews(): void {
-    const now = Date.now();
-    
-    for (const [id, review] of this.reviews.entries()) {
-      const isFinished = 
-        review.status === ReviewStatus.COMPLETED || 
-        review.status === ReviewStatus.ERROR;
-      
-      const isStale = 
-        now - review.lastUpdated > ReviewStore.CLEANUP_THRESHOLD;
-      
-      if (isFinished && isStale) {
-        this.reviews.delete(id);
-      }
+  public deleteReview(reviewId: string): boolean {
+    if (sessionReviews[reviewId]) {
+      delete sessionReviews[reviewId];
+      console.log(`[ReviewStore] Deleted review: ${reviewId}`);
+      return true;
     }
+    
+    console.log(`[ReviewStore] Cannot delete - review not found: ${reviewId}`);
+    return false;
   }
 }
 
 /**
- * Gets the singleton instance of the ReviewStore
+ * Gets the review store instance
  * @returns The ReviewStore instance
  */
 export function getReviewStore(): ReviewStore {

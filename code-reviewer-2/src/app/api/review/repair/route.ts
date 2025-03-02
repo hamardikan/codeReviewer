@@ -1,4 +1,3 @@
-
 import { NextRequest, NextResponse } from 'next/server';
 import { getGeminiClient } from '@/lib/gemini-client';
 import { repairWithRegex } from '@/lib/text-parser';
@@ -9,17 +8,19 @@ import { createRepairPrompt } from '@/lib/prompts';
  */
 interface RepairRequest {
   rawText: string;
+  language?: string;
 }
 
 /**
  * Attempts to repair a malformed response using the Gemini API
  * @param rawText - The raw text to repair
+ * @param language - The programming language
  * @returns The repaired and parsed result
  */
-async function repairWithAI(rawText: string) {
+async function repairWithAI(rawText: string, language = 'javascript') {
   try {
     const geminiClient = getGeminiClient();
-    const prompt = createRepairPrompt(rawText);
+    const prompt = createRepairPrompt(rawText, language);
     
     // Request the AI to fix the formatting
     const formattedText = await geminiClient.generateContent(prompt);
@@ -52,17 +53,26 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
       );
     }
     
+    console.log('[API] Repairing review text of length:', body.rawText.length);
+    
     // First try regex-based repair
     let repaired = repairWithRegex(body.rawText);
     
     // If regex fails, use another AI call to structure it
     if (!repaired.success) {
-      repaired = await repairWithAI(body.rawText);
+      console.log('[API] Regex repair failed, attempting AI-based repair');
+      repaired = await repairWithAI(body.rawText, body.language);
+    }
+    
+    if (repaired.success) {
+      console.log('[API] Successfully repaired review text');
+    } else {
+      console.log('[API] Failed to repair review text:', repaired.error);
     }
     
     return NextResponse.json(repaired);
   } catch (error) {
-    console.error('Error repairing response:', error);
+    console.error('[API] Error repairing response:', error);
     
     return NextResponse.json(
       { 

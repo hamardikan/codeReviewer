@@ -22,6 +22,11 @@ export interface StoredReview {
 }
 
 /**
+ * Check if we're running in a browser environment where localStorage is available
+ */
+const isBrowser = typeof window !== 'undefined';
+
+/**
  * Compresses a string using LZ-based compression
  * @param data - String to compress
  * @returns Compressed string
@@ -50,6 +55,8 @@ function decompressData(compressed: string): string {
  * @param reviews - Array of review objects to store
  */
 export function saveReviews(reviews: StoredReview[]): void {
+  if (!isBrowser) return;
+  
   try {
     // Limit to maximum number of items
     const limitedReviews = reviews.slice(0, MAX_HISTORY_ITEMS);
@@ -74,6 +81,8 @@ export function saveReviews(reviews: StoredReview[]): void {
  * @returns Array of stored reviews or empty array if none found
  */
 export function loadReviews(): StoredReview[] {
+  if (!isBrowser) return [];
+  
   try {
     // Try to get compressed data
     const compressed = localStorage.getItem('code-reviews-compressed');
@@ -113,6 +122,8 @@ export function loadReviews(): StoredReview[] {
  * @returns Updated array of all reviews
  */
 export function addReview(review: StoredReview): StoredReview[] {
+  if (!isBrowser) return [review];
+  
   const existingReviews = loadReviews();
   
   // Remove any existing review with the same ID
@@ -130,11 +141,16 @@ export function addReview(review: StoredReview): StoredReview[] {
 /**
  * Remove a review from storage by ID
  * @param reviewId - ID of the review to remove
+ * @returns Updated array of reviews after removal
  */
-export function removeReview(reviewId: string): void {
+export function removeReview(reviewId: string): StoredReview[] {
+  if (!isBrowser) return [];
+  
   const reviews = loadReviews();
   const updatedReviews = reviews.filter(review => review.id !== reviewId);
   saveReviews(updatedReviews);
+  
+  return updatedReviews;
 }
 
 /**
