@@ -1,5 +1,6 @@
 'use client';
 
+export const maxDuration = 60;
 import { useState, useEffect } from 'react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import CodeInput from '@/components/CodeInput';
