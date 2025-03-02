@@ -29,12 +29,16 @@ async function startReview(code, language, filename) {
     // Save the initial review
     await storageService.saveReview(reviewId, review);
     
-    // Start background processing
-    // We use a Promise without awaiting to return quickly
-    processReviewInBackground(reviewId, code, language).catch(error => {
-      logger.error(`Background processing error for ${reviewId}:`, error);
-    });
+    // Start background processing with setTimeout to ensure it runs in a separate event loop cycle
+    // This is crucial for proper asynchronous execution
+    setTimeout(() => {
+      processReviewInBackground(reviewId, code, language)
+        .catch(error => {
+          logger.error(`Background processing error for ${reviewId}:`, error);
+        });
+    }, 0);
     
+    logger.info(`Review ${reviewId} created and scheduled for background processing`);
     return reviewId;
   } catch (error) {
     logger.error('Error starting review:', error);
@@ -198,7 +202,7 @@ async function getReviewResult(reviewId) {
  */
 async function repairReview(reviewId, rawText, language) {
   try {
-    logger.info(`Repairing review ${reviewId}`);
+    logger.info(`===== REPAIRING REVIEW ${reviewId} =====`);
     
     // First try regex-based repair
     let repaired = repairWithRegex(rawText);
@@ -224,6 +228,7 @@ async function repairReview(reviewId, rawText, language) {
       }
     }
     
+    logger.info(`===== REPAIR COMPLETE: ${repaired.success ? 'SUCCESS' : 'FAILED'} =====`);
     return repaired;
   } catch (error) {
     logger.error('Error repairing review:', error);

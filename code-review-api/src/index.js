@@ -3,8 +3,6 @@
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
-const morgan = require('morgan');
-
 const cron = require('node-cron');
 const fs = require('fs-extra');
 
@@ -23,16 +21,43 @@ const app = express();
 app.use(helmet());
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
-app.use(morgan('dev'));
-app.use(requestLogger);
+
+// Only use morgan in development to avoid double logging
+if (config.nodeEnv === 'development') {
+  const morgan = require('morgan');
+  app.use(morgan('dev', {
+    // Skip logging for health check endpoints to reduce noise
+    skip: (req) => req.url.startsWith('/health')
+  }));
+} else {
+  // In non-development environments, use our custom logger
+  app.use(requestLogger);
+}
 
 // Initialize storage directory
 fs.ensureDirSync(config.storagePath);
 logger.info(`Storage directory ensured at: ${config.storagePath}`);
 
+// Check for Gemini API key
+if (!config.gemini.apiKey) {
+  logger.error('CRITICAL: No Gemini API key configured! Set GEMINI_API_KEY in your environment.');
+} else {
+  // Show the first and last 4 characters of the API key for debugging
+  const maskedKey = config.gemini.apiKey ? 
+    `${config.gemini.apiKey.slice(0, 4)}...${config.gemini.apiKey.slice(-4)}` : 
+    'NOT CONFIGURED';
+  logger.info(`Gemini API key configured: ${maskedKey}`);
+}
+
 // Routes
 app.use('/health', healthRoutes);
 app.use('/reviews', reviewRoutes);
+
+// 404 handler
+app.use((req, res) => {
+  logger.warn(`Route not found: ${req.method} ${req.url}`);
+  res.status(404).json({ error: 'Not found', message: `Route ${req.method} ${req.url} does not exist` });
+});
 
 // Error handling middleware
 app.use(errorHandler);
@@ -51,7 +76,7 @@ cron.schedule('*/30 * * * *', async () => {
 const server = app.listen(config.port, () => {
   logger.info(`=================================================`);
   logger.info(`Server started on port ${config.port} in ${config.nodeEnv} mode`);
-  logger.info(`Gemini API key configured: ${!!config.gemini.apiKey}`);
+  logger.info(`Gemini API key: ${config.gemini.apiKey ? 'CONFIGURED' : 'MISSING'}`);
   logger.info(`Storage path: ${config.storagePath}`);
   logger.info(`=================================================`);
 });
