@@ -1,37 +1,26 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { Upload, Clipboard, ChevronRight } from 'lucide-react';
 import CodeMirror from '@uiw/react-codemirror';
-import { javascript } from '@codemirror/lang-javascript';
-import { python } from '@codemirror/lang-python';
-import { java } from '@codemirror/lang-java';
-import { cpp } from '@codemirror/lang-cpp';
 import { vscodeDark } from '@uiw/codemirror-theme-vscode';
-
-/**
- * List of supported programming languages
- */
-const LANGUAGES = [
-  { id: 'javascript', name: 'JavaScript', extension: 'js', setup: javascript },
-  { id: 'python', name: 'Python', extension: 'py', setup: python },
-  { id: 'java', name: 'Java', extension: 'java', setup: java },
-  { id: 'cpp', name: 'C++', extension: 'cpp', setup: cpp },
-];
+import { LANGUAGES, detectLanguage } from '@/lib/language-utils';
 
 interface CodeInputProps {
-  onSubmit: (code: string) => void;
+  onSubmit: (code: string, language: any, filename?: string) => void;
   isSubmitting: boolean;
 }
 
 export default function CodeInput({ onSubmit, isSubmitting }: CodeInputProps) {
   const [code, setCode] = useState('');
   const [selectedLanguage, setSelectedLanguage] = useState(LANGUAGES[0]);
+  const [filename, setFilename] = useState<string | undefined>(undefined);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (code.trim()) {
-      onSubmit(code);
+      onSubmit(code, selectedLanguage, filename);
     }
   };
   
@@ -39,18 +28,35 @@ export default function CodeInput({ onSubmit, isSubmitting }: CodeInputProps) {
     const file = e.target.files?.[0];
     if (!file) return;
     
-    // Auto-detect language based on file extension
-    const extension = file.name.split('.').pop() || '';
-    const language = LANGUAGES.find(lang => lang.extension === extension) || selectedLanguage;
-    setSelectedLanguage(language);
+    setFilename(file.name);
+    
+    // Detect language based on file
+    const detectedLang = detectLanguage('', file.name);
+    setSelectedLanguage(detectedLang);
     
     // Read file content
     const reader = new FileReader();
     reader.onload = (event) => {
       const content = event.target?.result as string;
       setCode(content);
+      
+      // Double-check language based on content too
+      const contentLang = detectLanguage(content, file.name);
+      setSelectedLanguage(contentLang);
     };
     reader.readAsText(file);
+  };
+  
+  const handleCodeChange = (value: string) => {
+    setCode(value);
+    
+    // If no language selected already by file extension, try to detect from content
+    if (!filename && value.length > 50) {
+      const detectedLang = detectLanguage(value);
+      if (detectedLang.id !== selectedLanguage.id) {
+        setSelectedLanguage(detectedLang);
+      }
+    }
   };
   
   return (
@@ -58,7 +64,7 @@ export default function CodeInput({ onSubmit, isSubmitting }: CodeInputProps) {
       <div className="flex justify-between items-center">
         <h2 className="text-xl font-semibold text-green-600">Submit Code for Review</h2>
         <div className="flex items-center space-x-2">
-          <label htmlFor="language-select" className="text-sm text-gray-600">
+          <label htmlFor="language-select" className="text-sm text-gray-700">
             Language:
           </label>
           <select
@@ -87,9 +93,10 @@ export default function CodeInput({ onSubmit, isSubmitting }: CodeInputProps) {
         <input
           type="file"
           id="file-upload"
+          ref={fileInputRef}
           className="hidden"
           onChange={handleFileUpload}
-          accept=".js,.jsx,.ts,.tsx,.py,.java,.c,.cpp,.cs,.go,.rb,.php,.html,.css"
+          accept=".js,.jsx,.ts,.tsx,.py,.java,.c,.cpp,.cs,.go,.rb,.php,.html,.css,.rs,.md,.json,.xml,.sql"
         />
         <label
           htmlFor="file-upload"
@@ -97,6 +104,11 @@ export default function CodeInput({ onSubmit, isSubmitting }: CodeInputProps) {
         >
           Browse files
         </label>
+        {filename && (
+          <div className="mt-2 text-sm text-green-700">
+            Selected file: <span className="font-medium">{filename}</span>
+          </div>
+        )}
       </div>
       
       <div className="border-t border-gray-200 pt-6">
@@ -112,12 +124,17 @@ export default function CodeInput({ onSubmit, isSubmitting }: CodeInputProps) {
               height="400px"
               theme={vscodeDark}
               extensions={[selectedLanguage.setup()]}
-              onChange={(value) => setCode(value)}
+              onChange={handleCodeChange}
               placeholder="// Paste or type your code here"
             />
           </div>
           
-          <div className="mt-4 flex justify-end">
+          <div className="mt-4 flex justify-between items-center">
+            <div className="text-sm text-gray-600">
+              {code ? 
+                `Language: ${selectedLanguage.name} ${filename ? `• File: ${filename}` : ''}` 
+                : ''}
+            </div>
             <button
               type="submit"
               disabled={isSubmitting || !code.trim()}

@@ -12,12 +12,14 @@ interface CodeReviewDisplayProps {
   reviewState: ReviewState;
   onUpdateSuggestion: (suggestionId: string, accepted: boolean | null) => void;
   onRepairParsing: () => void;
+  originalCode?: string; // Add this new prop
 }
 
 export default function CodeReviewDisplay({
   reviewState,
   onUpdateSuggestion,
-  onRepairParsing
+  onRepairParsing,
+  originalCode
 }: CodeReviewDisplayProps) {
   const [activeTab, setActiveTab] = useState<'suggestions' | 'clean-code'>('suggestions');
   
@@ -48,6 +50,8 @@ export default function CodeReviewDisplay({
               <CleanCodeView 
                 cleanCode={reviewState.parsed.cleanCode || 'Generating improved code...'}
                 isLoading={!reviewState.parsed.cleanCode}
+                suggestions={reviewState.parsed.suggestions}
+                languageId={reviewState.language?.id}
               />
             )}
           </div>
@@ -124,13 +128,13 @@ export default function CodeReviewDisplay({
         <TabsList className="bg-gray-100 p-1 rounded-lg mb-6">
           <TabsTrigger
             value="suggestions"
-            className="px-4 py-2 rounded data-[state=active]:bg-white data-[state=active]:shadow-sm data-[state=active]:text-green-600"
+            className="px-4 py-2 rounded"
           >
-            Suggestions
+            Suggestions ({reviewState.parsed.suggestions.length})
           </TabsTrigger>
           <TabsTrigger
             value="clean-code"
-            className="px-4 py-2 rounded data-[state=active]:bg-white data-[state=active]:shadow-sm data-[state=active]:text-green-600"
+            className="px-4 py-2 rounded"
           >
             Clean Code
           </TabsTrigger>
@@ -146,7 +150,12 @@ export default function CodeReviewDisplay({
         </TabsContent>
         
         <TabsContent value="clean-code">
-          <CleanCodeView cleanCode={reviewState.parsed.cleanCode} />
+          <CleanCodeView 
+            cleanCode={reviewState.parsed.cleanCode} 
+            originalCode={originalCode}
+            suggestions={reviewState.parsed.suggestions}
+            languageId={reviewState.language.id}
+          />
         </TabsContent>
       </Tabs>
     </div>

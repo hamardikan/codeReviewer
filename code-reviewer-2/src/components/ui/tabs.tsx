@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext} from "react";
+import React, { createContext, useContext } from "react";
 
 // Context for tab state management
 interface TabsContextType {
@@ -58,14 +58,22 @@ interface TabsTriggerProps {
 // TabsTrigger component
 export function TabsTrigger({ value, children, className = "", disabled = false }: TabsTriggerProps) {
   const { activeTab, setActiveTab } = useTabsContext();
+  const isActive = activeTab === value;
   
   return (
     <button
       type="button"
       role="tab"
-      aria-selected={activeTab === value}
+      aria-selected={isActive}
       disabled={disabled}
-      className={`${className} ${activeTab === value ? "data-[state=active]" : ""}`}
+      className={`
+        ${className}
+        ${isActive 
+          ? 'bg-white text-green-600 shadow-sm font-medium' 
+          : 'text-gray-700 hover:bg-gray-200 hover:text-gray-900'}
+        ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}
+        transition-colors
+      `}
       onClick={() => !disabled && setActiveTab(value)}
     >
       {children}

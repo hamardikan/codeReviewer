@@ -4,15 +4,14 @@ import { getGeminiClient } from '@/lib/gemini-client';
 import { ReviewStatus, getReviewStore } from '@/lib/review-store';
 import { createCodeReviewPrompt } from '@/lib/prompts';
 
-
 /**
  * Request body interface for starting a review
  */
 interface StartReviewRequest {
-    code: string;
-    language?: string;
-  }
-  
+  code: string;
+  language: string;
+  filename?: string;
+}
 
 /**
  * Response interface for the start review API
@@ -25,14 +24,19 @@ interface StartReviewResponse {
  * Processes a code review in the background
  * @param reviewId - The ID of the review to process
  * @param code - The code to review
+ * @param language - The programming language
  */
-async function processReviewInBackground(reviewId: string, code: string): Promise<void> {
+async function processReviewInBackground(
+  reviewId: string, 
+  code: string,
+  language: string
+): Promise<void> {
   const reviewStore = getReviewStore();
   const geminiClient = getGeminiClient();
   
   try {
-    // Create the prompt for the code review
-    const prompt = createCodeReviewPrompt(code);
+    // Create the prompt for the code review with language context
+    const prompt = createCodeReviewPrompt(code, language);
     
     // Stream the response from Gemini
     for await (const chunk of geminiClient.streamResponse(prompt)) {
@@ -80,7 +84,11 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     
     // Start processing in background without awaiting completion
     // This allows us to return quickly and avoid timeout issues
-    processReviewInBackground(reviewId, body.code).catch(error => {
+    processReviewInBackground(
+      reviewId, 
+      body.code, 
+      body.language || 'javascript'
+    ).catch(error => {
       console.error('Unhandled error in background processing:', error);
     });
     
