@@ -1,5 +1,5 @@
 import { nanoid } from 'nanoid';
-import { CodeReviewResponse} from './prompts';
+import { CodeReviewResponse } from './prompts';
 
 /**
  * Result of the parsing operation
@@ -8,6 +8,25 @@ interface ParseResult {
   success: boolean;
   result?: CodeReviewResponse;
   error?: string;
+}
+
+/**
+ * Cleans code blocks by removing Markdown code block syntax
+ * @param text - The text that might contain code blocks
+ * @returns The cleaned text without code block delimiters
+ */
+function cleanCodeBlocks(text: string): string {
+  if (!text) return '';
+  
+  // First, check if the entire string is wrapped in code block
+  if (/^```[\w]*\n[\s\S]*\n```$/.test(text.trim())) {
+    // Remove the opening and closing code block markers
+    return text.trim()
+      .replace(/^```[\w]*\n/, '') // Remove opening ```language\n
+      .replace(/\n```$/, '');     // Remove closing ```
+  }
+  
+  return text;
 }
 
 /**
@@ -77,8 +96,8 @@ export function parseReviewText(rawText: string): ParseResult {
         );
         
         if (originalMatch && suggestedMatch) {
-          const originalCode = originalMatch[1].trim();
-          const suggestedCode = suggestedMatch[1].trim();
+          const originalCode = cleanCodeBlocks(originalMatch[1].trim());
+          const suggestedCode = cleanCodeBlocks(suggestedMatch[1].trim());
           
           // Create a unique key based on line number, original code, and suggested code
           // This helps identify duplicate suggestions
@@ -107,7 +126,7 @@ export function parseReviewText(rawText: string): ParseResult {
     );
     
     if (cleanCodeMatch && cleanCodeMatch[1]) {
-      result.cleanCode = cleanCodeMatch[1].trim();
+      result.cleanCode = cleanCodeBlocks(cleanCodeMatch[1].trim());
     } else {
       return {
         success: false,
@@ -133,6 +152,20 @@ export function parseReviewText(rawText: string): ParseResult {
       error: error instanceof Error ? error.message : 'Unknown error parsing response'
     };
   }
+}
+
+/**
+ * Cleans code block markers from text
+ * @param text - The text to clean
+ * @returns The cleaned text
+ */
+function removeCodeBlockSyntax(text: string): string {
+  return text
+    // Remove ```language and ``` markers
+    .replace(/```(?:\w*\n|\s*)/g, '')
+    // Remove inline code markers
+    .replace(/`([^`]+)`/g, '$1')
+    .trim();
 }
 
 /**
@@ -175,14 +208,14 @@ export function repairWithRegex(rawText: string): ParseResult {
       
       if (codeBlocks && codeBlocks.length >= 1) {
         // Very basic extraction - assume first code block is original and second is suggested
-        const originalCode = codeBlocks[0].replace(/```\w*\n?|```|`/g, '').trim();
+        const originalCode = removeCodeBlockSyntax(codeBlocks[0]);
         const suggestedCode = codeBlocks.length > 1 
-          ? codeBlocks[1].replace(/```\w*\n?|```|`/g, '').trim() 
+          ? removeCodeBlockSyntax(codeBlocks[1])
           : originalCode;
           
         // Remaining text is the explanation
         const explanation = content
-          .replace(codeBlocks.join(''), '')
+          .replace(new RegExp(codeBlocks.join('|').replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), '')
           .replace(/```\w*\n?|```|`/g, '')
           .trim();
           
@@ -207,17 +240,23 @@ export function repairWithRegex(rawText: string): ParseResult {
 
     // Look for the clean code section - anything after keywords like "clean code", "fixed code", etc.
     const cleanCodeMatch = rawText.match(/(?:clean\s*code|improved\s*code|fixed\s*code|refactored\s*code|here.*?final\s*code)(?:\s*:|\s*is|\s*-)?([^]*?)$/i);
+    
     if (cleanCodeMatch) {
-      // Extract the code block if it exists
-      const codeBlock = cleanCodeMatch[1].match(/```[^`]*```/);
-      result.cleanCode = codeBlock 
-        ? codeBlock[0].replace(/```\w*\n?|```/g, '').trim()
-        : cleanCodeMatch[1].trim();
+      // Check if there's a code block in the clean code section
+      const codeBlock = cleanCodeMatch[1].match(/```[\s\S]*?```/);
+      
+      if (codeBlock) {
+        // Extract the code and remove markdown code block syntax
+        result.cleanCode = cleanCodeBlocks(codeBlock[0]);
+      } else {
+        // If no code block found, just clean the entire section
+        result.cleanCode = cleanCodeBlocks(cleanCodeMatch[1].trim());
+      }
     } else {
       // If no clean code section found, use the last code block in the text
-      const lastCodeBlock = rawText.match(/```[^`]*```(?!.*```)/);
+      const lastCodeBlock = rawText.match(/```[\s\S]*?```(?!.*```)/);
       if (lastCodeBlock) {
-        result.cleanCode = lastCodeBlock[0].replace(/```\w*\n?|```/g, '').trim();
+        result.cleanCode = cleanCodeBlocks(lastCodeBlock[0]);
       }
     }
 
