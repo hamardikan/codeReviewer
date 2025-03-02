@@ -3,6 +3,7 @@ import { getGeminiClient } from '@/lib/gemini-client';
 import { repairWithRegex } from '@/lib/text-parser';
 import { createRepairPrompt } from '@/lib/prompts';
 
+export const maxDuration = 60;
 /**
  * Request body interface for repair API
  */

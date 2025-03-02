@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getReviewStore } from '@/lib/review-store';
 
+export const maxDuration = 60;
 /**
  * Response interface for the chunks API
  */

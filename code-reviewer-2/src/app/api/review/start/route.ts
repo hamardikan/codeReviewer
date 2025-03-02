@@ -3,6 +3,8 @@ import { NextRequest } from 'next/server';
 import { getGeminiClient } from '@/lib/gemini-client';
 import { createCodeReviewPrompt } from '@/lib/prompts';
 
+export const maxDuration = 60;
+
 /**
  * Request body interface for starting a review
  */
