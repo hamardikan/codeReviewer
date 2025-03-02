@@ -8,7 +8,7 @@ import CodeReviewDisplay from '@/components/CodeReviewDisplay';
 import ReviewHistory from '@/components/ReviewHistory';
 import { useReviewStream } from '@/hooks/useReviewStream';
 import { loadReviews, StoredReview } from '@/lib/storage-utils';
-import { getLanguageById} from '@/lib/language-utils';
+import { getLanguageById } from '@/lib/language-utils';
 
 export default function Home() {
   const { reviewState, startReview, updateSuggestion, repairParsing } = useReviewStream();

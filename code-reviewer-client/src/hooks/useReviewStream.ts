@@ -65,25 +65,6 @@ export function useReviewStream() {
   const isPollingRef = useRef(false);
   
   /**
-   * Cleans up a review from Redis after it's stored locally
-   * @param reviewId - The ID of the review to clean up
-   */
-  const cleanupReview = useCallback(async (reviewId: string) => {
-    try {
-      await fetch('/api/review/cleanup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reviewId })
-      });
-      
-      console.log(`[Client] Cleaned up review ${reviewId} from Redis`);
-    } catch (error) {
-      console.error(`[Client] Error cleaning up review ${reviewId}:`, error);
-      // Non-critical error, don't update state
-    }
-  }, []);
-  
-  /**
    * Stops any active polling
    */
   const stopPolling = useCallback(() => {
@@ -127,11 +108,6 @@ export function useReviewStream() {
             prev.filename
           );
           addReview(storedReview);
-          
-          // Clean up the Redis cache
-          cleanupReview(reviewId).catch(err => 
-            console.error('Error cleaning up review:', err)
-          );
         }
         
         return {
@@ -154,7 +130,7 @@ export function useReviewStream() {
         progress: 100
       }));
     }
-  }, [cleanupReview]); // Added cleanupReview as a dependency
+  }, []); 
   
   /**
    * Polls the status of a review
@@ -242,7 +218,7 @@ export function useReviewStream() {
       
       stopPolling();
     }
-  }, [stopPolling, fetchFinalResult]); // Added fetchFinalResult as a dependency
+  }, [stopPolling, fetchFinalResult]); 
   
   /**
    * Starts a new code review
@@ -344,7 +320,8 @@ export function useReviewStream() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ 
           rawText: reviewState.rawText,
-          language: reviewState.language.id
+          language: reviewState.language.id,
+          reviewId: reviewState.reviewId
         })
       });
       
@@ -372,11 +349,6 @@ export function useReviewStream() {
           reviewState.filename
         );
         addReview(storedReview);
-        
-        // Clean up Redis cache
-        cleanupReview(reviewState.reviewId as string).catch(err => 
-          console.error('Error cleaning up review after repair:', err)
-        );
       } else {
         throw new Error(data.error || 'Failed to repair parsing');
       }
@@ -389,7 +361,7 @@ export function useReviewStream() {
         error: error instanceof Error ? error.message : 'Unknown error repairing response'
       }));
     }
-  }, [reviewState.rawText, reviewState.parseError, reviewState.reviewId, reviewState.language, reviewState.filename, cleanupReview]);
+  }, [reviewState.rawText, reviewState.parseError, reviewState.reviewId, reviewState.language, reviewState.filename]);
   
   /**
    * Updates a suggestion's acceptance status

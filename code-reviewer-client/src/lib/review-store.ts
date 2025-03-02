@@ -1,10 +1,5 @@
 import { CodeReviewResponse } from './prompts';
-import { getRedisClient } from './redis-client';
-
-/**
- * Default TTL for Redis keys in seconds (5 minutes)
- */
-const DEFAULT_TTL = 300;
+import { getApiClient } from './api-client';
 
 /**
  * Possible statuses for a review
@@ -33,11 +28,11 @@ export interface ReviewData {
 }
 
 /**
- * Redis-based store for reviews
+ * API-based store for reviews
  */
 export class ReviewStore {
   private static instance: ReviewStore | null = null;
-  private keyPrefix = 'review:';
+  private apiClient = getApiClient();
 
   /**
    * Private constructor to enforce singleton pattern
@@ -53,15 +48,6 @@ export class ReviewStore {
       ReviewStore.instance = new ReviewStore();
     }
     return ReviewStore.instance;
-  }
-
-  /**
-   * Generate Redis key for a review
-   * @param reviewId - The ID of the review
-   * @returns The Redis key
-   */
-  private getKey(reviewId: string): string {
-    return `${this.keyPrefix}${reviewId}`;
   }
 
   /**
@@ -82,6 +68,7 @@ export class ReviewStore {
   ): Promise<ReviewData> {
     const now = Date.now();
     
+    // This is just a local object now - the actual storage is on the API server
     const reviewData: ReviewData = {
       id: reviewId,
       status,
@@ -92,20 +79,7 @@ export class ReviewStore {
       filename
     };
     
-    try {
-      const redis = await getRedisClient();
-      const key = this.getKey(reviewId);
-      
-      // Store the review in Redis with TTL
-      await redis.set(key, JSON.stringify(reviewData), { EX: DEFAULT_TTL });
-      
-      console.log(`[ReviewStore] Stored review: ${reviewId}, Status: ${status}`);
-      
-      return reviewData;
-    } catch (error) {
-      console.error(`[ReviewStore] Error storing review ${reviewId}:`, error);
-      throw error;
-    }
+    return reviewData;
   }
 
   /**
@@ -115,54 +89,39 @@ export class ReviewStore {
    */
   public async getReview(reviewId: string): Promise<ReviewData | null> {
     try {
-      const redis = await getRedisClient();
-      const key = this.getKey(reviewId);
+      const statusData = await this.apiClient.getReviewStatus(reviewId);
       
-      const data = await redis.get(key);
-      
-      if (!data) {
+      if (!statusData) {
         console.log(`[ReviewStore] Review not found: ${reviewId}`);
         return null;
       }
       
-      // Reset TTL when fetching
-      await redis.expire(key, DEFAULT_TTL);
+      const reviewData: ReviewData = {
+        id: reviewId,
+        status: statusData.status,
+        chunks: statusData.chunks || [],
+        timestamp: statusData.timestamp || Date.now(),
+        lastUpdated: statusData.lastUpdated || Date.now(),
+        error: statusData.error,
+        language: statusData.language,
+        filename: statusData.filename
+      };
       
-      return JSON.parse(data) as ReviewData;
+      return reviewData;
     } catch (error) {
       console.error(`[ReviewStore] Error retrieving review ${reviewId}:`, error);
-      throw error;
+      return null;
     }
   }
 
   /**
    * Appends a chunk to an existing review
-   * @param reviewId - The ID of the review
-   * @param chunk - The content chunk to append
-   * @returns Promise resolving to the updated review or null if review not found
+   * This is handled by the API server now, but we keep the interface for compatibility
    */
   public async appendChunk(reviewId: string, chunk: string): Promise<ReviewData | null> {
-    try {
-      const review = await this.getReview(reviewId);
-      
-      if (!review) {
-        console.log(`[ReviewStore] Cannot append chunk - review not found: ${reviewId}`);
-        return null;
-      }
-      
-      review.chunks.push(chunk);
-      review.lastUpdated = Date.now();
-      
-      const redis = await getRedisClient();
-      const key = this.getKey(reviewId);
-      
-      await redis.set(key, JSON.stringify(review), { EX: DEFAULT_TTL });
-      
-      return review;
-    } catch (error) {
-      console.error(`[ReviewStore] Error appending chunk to review ${reviewId}:`, error);
-      throw error;
-    }
+    // In the new architecture, chunks are managed by the API server
+    // This method is kept for compatibility but does nothing
+    return this.getReview(reviewId);
   }
 
   /**
@@ -177,31 +136,9 @@ export class ReviewStore {
     status: ReviewStatus,
     error?: string
   ): Promise<ReviewData | null> {
-    try {
-      const review = await this.getReview(reviewId);
-      
-      if (!review) {
-        console.log(`[ReviewStore] Cannot update status - review not found: ${reviewId}`);
-        return null;
-      }
-      
-      review.status = status;
-      review.lastUpdated = Date.now();
-      
-      if (error) {
-        review.error = error;
-      }
-      
-      const redis = await getRedisClient();
-      const key = this.getKey(reviewId);
-      
-      await redis.set(key, JSON.stringify(review), { EX: DEFAULT_TTL });
-      
-      return review;
-    } catch (error) {
-      console.error(`[ReviewStore] Error updating status of review ${reviewId}:`, error);
-      throw error;
-    }
+    // In the new architecture, status updates are managed by the API server
+    // This method is kept for compatibility but does nothing
+    return this.getReview(reviewId);
   }
 
   /**
@@ -214,52 +151,16 @@ export class ReviewStore {
     reviewId: string,
     parsedResponse: CodeReviewResponse
   ): Promise<ReviewData | null> {
-    try {
-      const review = await this.getReview(reviewId);
-      
-      if (!review) {
-        console.log(`[ReviewStore] Cannot update parsed response - review not found: ${reviewId}`);
-        return null;
-      }
-      
-      review.parsedResponse = parsedResponse;
-      review.lastUpdated = Date.now();
-      
-      const redis = await getRedisClient();
-      const key = this.getKey(reviewId);
-      
-      await redis.set(key, JSON.stringify(review), { EX: DEFAULT_TTL });
-      
-      return review;
-    } catch (error) {
-      console.error(`[ReviewStore] Error updating parsed response of review ${reviewId}:`, error);
-      throw error;
-    }
+    // In the new architecture, parsed responses are managed by the API server
+    // This method is kept for compatibility but does nothing
+    return this.getReview(reviewId);
   }
 
   /**
-   * Deletes a review by ID
-   * @param reviewId - The ID of the review to delete
-   * @returns Promise resolving to true if successful, false if review not found
+   * No-op in this architecture since cleanup is handled by the API server
    */
   public async deleteReview(reviewId: string): Promise<boolean> {
-    try {
-      const redis = await getRedisClient();
-      const key = this.getKey(reviewId);
-      
-      const result = await redis.del(key);
-      
-      if (result === 0) {
-        console.log(`[ReviewStore] Cannot delete - review not found: ${reviewId}`);
-        return false;
-      }
-      
-      console.log(`[ReviewStore] Deleted review: ${reviewId}`);
-      return true;
-    } catch (error) {
-      console.error(`[ReviewStore] Error deleting review ${reviewId}:`, error);
-      throw error;
-    }
+    return true;
   }
 }
 
