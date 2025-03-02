@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getReviewStore } from '@/lib/review-store';
 
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 /**
  * Request body interface for cleanup API
