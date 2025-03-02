@@ -23,10 +23,25 @@ export default function CodeReviewDisplay({
 }: CodeReviewDisplayProps) {
   const [activeTab, setActiveTab] = useState<'suggestions' | 'clean-code'>('suggestions');
   
-  // Handle loading states
-  if (reviewState.status === 'loading' || reviewState.status === 'streaming') {
+  // Function to render progress bar
+  const renderProgressBar = (progress: number = 0) => (
+    <div className="w-full bg-gray-200 rounded-full h-2 mb-4">
+      <div 
+        className="bg-green-600 h-2 rounded-full" 
+        style={{ width: `${progress}%` }}
+      ></div>
+    </div>
+  );
+
+  // Handle loading and processing states
+  if (reviewState.status === 'loading' || reviewState.status === 'processing') {
+    const isProcessing = reviewState.status === 'processing';
+    const progress = reviewState.progress || (isProcessing ? 10 : 5);
+    
     return (
       <div className="space-y-6">
+        {renderProgressBar(progress)}
+        
         <div className="flex items-center justify-center space-x-2 py-4 text-green-600">
           <Loader2 className="h-6 w-6 animate-spin" />
           <span className="font-medium">
@@ -34,7 +49,45 @@ export default function CodeReviewDisplay({
           </span>
         </div>
         
-        {reviewState.status === 'streaming' && reviewState.rawText && (
+        {reviewState.status === 'processing' && reviewState.rawText && (
+          <div className="mt-4">
+            <ReviewSummary summary={reviewState.parsed.summary || 'Generating summary...'} isLoading={!reviewState.parsed.summary} />
+            
+            {activeTab === 'suggestions' && (
+              <SuggestionsList 
+                suggestions={reviewState.parsed.suggestions} 
+                onAccept={onUpdateSuggestion}
+                isLoading={reviewState.parsed.suggestions.length === 0}
+              />
+            )}
+            
+            {activeTab === 'clean-code' && (
+              <CleanCodeView 
+                cleanCode={reviewState.parsed.cleanCode || 'Generating improved code...'}
+                originalCode={originalCode}
+                isLoading={!reviewState.parsed.cleanCode}
+                suggestions={reviewState.parsed.suggestions}
+                languageId={reviewState.language?.id}
+              />
+            )}
+          </div>
+        )}
+      </div>
+    );
+  }
+  
+  // Handle the old streaming case (for backward compatibility)
+  if (reviewState.status === 'streaming') {
+    return (
+      <div className="space-y-6">
+        {renderProgressBar(reviewState.progress || 50)}
+        
+        <div className="flex items-center justify-center space-x-2 py-4 text-green-600">
+          <Loader2 className="h-6 w-6 animate-spin" />
+          <span className="font-medium">Streaming analysis...</span>
+        </div>
+        
+        {reviewState.rawText && (
           <div className="mt-4">
             <ReviewSummary summary={reviewState.parsed.summary || 'Generating summary...'} isLoading={!reviewState.parsed.summary} />
             
@@ -125,6 +178,15 @@ export default function CodeReviewDisplay({
   // Display completed review
   return (
     <div className="space-y-6">
+      {reviewState.status === 'repairing' && (
+        <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg mb-4">
+          <div className="flex items-center">
+            <Loader2 className="h-5 w-5 text-yellow-600 animate-spin mr-3" />
+            <p className="text-yellow-800">Repairing the response format...</p>
+          </div>
+        </div>
+      )}
+      
       <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'suggestions' | 'clean-code')}>
         <TabsList className="bg-gray-100 p-1 rounded-lg mb-6">
           <TabsTrigger

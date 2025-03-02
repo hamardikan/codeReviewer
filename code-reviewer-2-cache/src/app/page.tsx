@@ -20,6 +20,23 @@ export default function Home() {
   // Load reviews on client-side only
   useEffect(() => {
     setReviews(loadReviews());
+    
+    // Check for reviewId in URL query parameter
+    // This allows restoring state after a page refresh
+    const params = new URLSearchParams(window.location.search);
+    const reviewId = params.get('reviewId');
+    
+    if (reviewId) {
+      // We found a review ID, set it as active tab
+      setActiveTab('review');
+      
+      // The useReviewStream hook will handle polling for the review status
+      // We just need to set the initial state in sessionStorage
+      const savedCode = sessionStorage.getItem(`code:${reviewId}`);
+      if (savedCode) {
+        setOriginalCode(savedCode);
+      }
+    }
   }, []);
   
   // Start a code review
@@ -29,7 +46,27 @@ export default function Home() {
     startReview(code, languageObj, filename);
     setActiveTab('review');
     setSelectedHistoryReview(null);
+    
+    // Save code in session storage to recover after refresh
+    if (code) {
+      sessionStorage.setItem('last_submitted_code', code);
+    }
   };
+  
+  // Update URL when reviewId changes
+  useEffect(() => {
+    if (reviewState.reviewId) {
+      // Update URL with reviewId for persistence
+      const url = new URL(window.location.href);
+      url.searchParams.set('reviewId', reviewState.reviewId);
+      window.history.replaceState({}, '', url.toString());
+      
+      // Save code in session storage
+      if (originalCode) {
+        sessionStorage.setItem(`code:${reviewState.reviewId}`, originalCode);
+      }
+    }
+  }, [reviewState.reviewId, originalCode]);
   
   // Handle selecting a review from history
   const handleSelectReview = (review: StoredReview) => {

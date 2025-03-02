@@ -2,14 +2,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getGeminiClient } from '@/lib/gemini-client';
 import { repairWithRegex } from '@/lib/text-parser';
 import { createRepairPrompt } from '@/lib/prompts';
+import { getReviewStore, ReviewStatus } from '@/lib/review-store';
 
 export const maxDuration = 60;
+
 /**
  * Request body interface for repair API
  */
 interface RepairRequest {
   rawText: string;
   language?: string;
+  reviewId?: string;
 }
 
 /**
@@ -63,6 +66,20 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     if (!repaired.success) {
       console.log('[API] Regex repair failed, attempting AI-based repair');
       repaired = await repairWithAI(body.rawText, body.language);
+    }
+    
+    // If we have a review ID, update the review in Redis
+    if (repaired.success && body.reviewId && repaired.result) {
+      const reviewStore = getReviewStore();
+      const review = await reviewStore.getReview(body.reviewId);
+      
+      if (review) {
+        // Update the parsed response and status
+        await reviewStore.updateParsedResponse(body.reviewId, repaired.result);
+        await reviewStore.updateStatus(body.reviewId, ReviewStatus.COMPLETED);
+        
+        console.log(`[API] Updated repaired review in Redis: ${body.reviewId}`);
+      }
     }
     
     if (repaired.success) {
