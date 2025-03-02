@@ -1,101 +1,134 @@
-import Image from "next/image";
+'use client';
+
+import { useState } from 'react';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import CodeInput from '@/components/CodeInput';
+import CodeReviewDisplay from '@/components/CodeReviewDisplay';
+import ReviewHistory from '@/components/ReviewHistory';
+import { useReviewStream } from '@/hooks/useReviewStream';
+import { useLocalStorage } from '@/hooks/useLocalStorage';
+import { CodeReviewResponse } from '@/lib/prompts';
+
+/**
+ * Structure of a review in history
+ */
+interface HistoryReview {
+  id: string;
+  timestamp: number;
+  parsedResponse: CodeReviewResponse;
+  rawText: string;
+}
 
 export default function Home() {
+  const { reviewState, startReview, updateSuggestion, repairParsing } = useReviewStream();
+  const [activeTab, setActiveTab] = useState('new-review');
+  const [reviews] = useLocalStorage<HistoryReview[]>('code-reviews', []);
+  const [selectedHistoryReview, setSelectedHistoryReview] = useState<HistoryReview | null>(null);
+  
+  // Start a code review
+  const handleSubmitCode = (code: string) => {
+    startReview(code);
+    setActiveTab('review');
+    setSelectedHistoryReview(null);
+  };
+  
+  // Handle selecting a review from history
+  const handleSelectReview = (review: HistoryReview) => {
+    setSelectedHistoryReview(review);
+    setActiveTab('review');
+  };
+  
   return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              src/app/page.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
-
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
+    <main className="min-h-screen bg-white p-4 md:p-6 max-w-6xl mx-auto">
+      <header className="mb-6">
+        <h1 className="text-2xl font-bold text-green-600">Code Review AI</h1>
+        <p className="text-gray-600">AI-powered code reviews using clean code principles</p>
+      </header>
+      
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList className="bg-gray-100 p-1 rounded-lg mb-6">
+          <TabsTrigger 
+            value="new-review" 
+            className="px-4 py-2 rounded data-[state=active]:bg-white data-[state=active]:shadow-sm data-[state=active]:text-green-600"
           >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
+            New Review
+          </TabsTrigger>
+          
+          <TabsTrigger 
+            value="review" 
+            className="px-4 py-2 rounded data-[state=active]:bg-white data-[state=active]:shadow-sm data-[state=active]:text-green-600"
+            disabled={reviewState.status === 'idle' && !selectedHistoryReview}
+          >
+            Current Review
+          </TabsTrigger>
+          
+          <TabsTrigger 
+            value="history" 
+            className="px-4 py-2 rounded data-[state=active]:bg-white data-[state=active]:shadow-sm data-[state=active]:text-green-600"
+          >
+            History
+          </TabsTrigger>
+        </TabsList>
+        
+        <TabsContent value="new-review">
+          <CodeInput 
+            onSubmit={handleSubmitCode} 
+            isSubmitting={reviewState.status === 'loading'} 
+          />
+        </TabsContent>
+        
+        <TabsContent value="review">
+          {selectedHistoryReview ? (
+            // Display selected history review
+            <div className="space-y-6">
+              <div className="flex justify-between items-center mb-6">
+                <h2 className="text-xl font-semibold text-green-600">Review from History</h2>
+                <button 
+                  onClick={() => setSelectedHistoryReview(null)} 
+                  className="text-sm text-gray-600 hover:text-gray-900"
+                >
+                  Return to active review
+                </button>
+              </div>
+              <CodeReviewDisplay 
+                reviewState={{
+                  reviewId: selectedHistoryReview.id,
+                  status: 'completed',
+                  rawText: selectedHistoryReview.rawText,
+                  parsed: selectedHistoryReview.parsedResponse,
+                  parseError: null,
+                  error: null
+                }}
+                onUpdateSuggestion={() => {/* No-op for history reviews */}}
+                onRepairParsing={() => {/* No-op for history reviews */}}
+              />
+            </div>
+          ) : reviewState.status !== 'idle' ? (
+            // Display active review
+            <CodeReviewDisplay 
+              reviewState={reviewState}
+              onUpdateSuggestion={updateSuggestion}
+              onRepairParsing={repairParsing}
             />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
-        </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
+          ) : (
+            // No review selected
+            <div className="p-6 text-center border-2 border-dashed border-gray-200 rounded-lg">
+              <p className="text-gray-600">No active review. Submit code or select from history.</p>
+            </div>
+          )}
+        </TabsContent>
+        
+        <TabsContent value="history">
+          <ReviewHistory 
+            reviews={reviews} 
+            onSelectReview={handleSelectReview} 
           />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
+        </TabsContent>
+      </Tabs>
+      
+      <footer className="mt-12 pt-6 border-t border-gray-200 text-center text-sm text-gray-500">
+        <p>Code Review AI • Powered by Gemini • {new Date().getFullYear()}</p>
       </footer>
-    </div>
+    </main>
   );
 }
