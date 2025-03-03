@@ -81,6 +81,17 @@ const server = app.listen(config.port, () => {
   logger.info(`=================================================`);
 });
 
+setTimeout(async () => {
+    try {
+      const geminiService = require('./services/geminiService');
+      logger.info('Testing Gemini API connection...');
+      const result = await geminiService.generateContent('Hello, respond with OK');
+      logger.info(`Gemini API test result: ${result}`);
+    } catch (error) {
+      logger.error('Gemini API test failed:', error);
+    }
+  }, 2000);
+
 // Handle graceful shutdown
 process.on('SIGTERM', () => {
   logger.info('SIGTERM received, shutting down gracefully');
