@@ -204,10 +204,10 @@ Contributions are welcome! If you'd like to improve any of these approaches or a
 
 ## License
 
-[MIT License](LICENSE)
+Still Undecided
 
 ## Acknowledgments
 
-- This project uses OpenAI's APIs for code review intelligence
+- This project uses Google Gemini's APIs for code review intelligence
 - Built with Next.js, React, and TypeScript
 - Deployed on Vercel's infrastructure
