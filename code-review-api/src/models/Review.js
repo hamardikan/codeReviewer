@@ -86,7 +86,37 @@ class ReviewData {
    * Check if the review is complete
    */
   isComplete() {
-    return this.status === ReviewStatus.COMPLETED || this.status === ReviewStatus.ERROR;
+    // Explicit status check
+    if (this.status === ReviewStatus.COMPLETED || this.status === ReviewStatus.ERROR) {
+      return true;
+    }
+    
+    // If we have a parsed response, consider it complete
+    if (this.parsedResponse) {
+      return true;
+    }
+    
+    // Content-based check for completeness
+    if (this.chunks.length > 0) {
+      const rawText = this.getRawText();
+      if (rawText.length > 1000) {
+        // Check for markers of completion
+        const hasSummary = /SUMMARY:|Summary:|summary:/i.test(rawText);
+        const hasSuggestions = /SUGGESTIONS:|Suggestions:|suggestions:/i.test(rawText);
+        const hasCleanCode = /CLEAN[_\s]CODE:|Clean[_\s]Code:|clean[_\s]code:/i.test(rawText);
+        
+        // If all three sections are present, it's likely complete
+        if (hasSummary && hasSuggestions && hasCleanCode) {
+          // Additional check to ensure the clean code section has content
+          const cleanCodeMatch = rawText.match(/(?:CLEAN[_\s]CODE:|Clean[_\s]Code:|clean[_\s]code:)([\s\S]*?)$/i);
+          if (cleanCodeMatch && cleanCodeMatch[1] && cleanCodeMatch[1].length > 100) {
+            return true;
+          }
+        }
+      }
+    }
+    
+    return false;
   }
 }
 

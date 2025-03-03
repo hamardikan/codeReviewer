@@ -226,152 +226,182 @@ export function useReviewStream() {
   }, [stopPolling]); 
   
   /**
-   * Polls the status of a review
-   * @param reviewId - The ID of the review to poll
-   */
-  const pollReviewStatus = useCallback(async (reviewId: string) => {
-    if (!reviewId || !isPollingRef.current) {
-      console.log('Polling skipped - inactive or missing reviewId');
+ * Polls the status of a review
+ * @param reviewId - The ID of the review to poll
+ */
+const pollReviewStatus = useCallback(async (reviewId: string) => {
+  if (!reviewId || !isPollingRef.current) {
+    console.log('Polling skipped - inactive or missing reviewId');
+    return;
+  }
+  
+  try {
+    // Fetch the current status
+    console.log(`Polling status for review ${reviewId}`);
+    const response = await fetch(`/api/review/status?id=${reviewId}`);
+    
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      throw new Error(`Failed to get review status: ${response.status} - ${errorData?.error || 'Unknown error'}`);
+    }
+    
+    const statusData = await response.json();
+    console.log('Received status data:', {
+      status: statusData.status, 
+      chunks: statusData.chunks?.length || 0,
+      isComplete: statusData.isComplete
+    });
+    
+    // CRITICAL SECTION: Check for any completion indicators
+    
+    // 1. Check explicit server completion flag
+    if (statusData.isComplete === true) {
+      console.log('Server explicitly set isComplete to true, fetching final result');
+      await fetchFinalResult(reviewId);
+      stopPolling();
       return;
     }
     
-    try {
-      // Fetch the current status
-      console.log(`Polling status for review ${reviewId}`);
-      const response = await fetch(`/api/review/status?id=${reviewId}`);
-      
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(`Failed to get review status: ${response.status} - ${errorData?.error || 'Unknown error'}`);
-      }
-      
-      const statusData = await response.json();
-      console.log('Received status data:', {
-        status: statusData.status, 
-        chunks: statusData.chunks?.length || 0,
-        isComplete: statusData.isComplete
-      });
-      
-      // Check for explicit completion markers from server
-      const serverStatus = statusData.status?.toLowerCase();
-      const serverSaysComplete = 
-        statusData.isComplete === true || 
-        serverStatus === 'completed' || 
-        serverStatus === 'error';
-        
-      console.log(`Server status: '${serverStatus}', server says complete: ${serverSaysComplete}`);
-      
-      // If the server explicitly indicates completion
-      if (serverSaysComplete) {
-        console.log('Server indicates review is complete, fetching final result and stopping polling');
+    // 2. Check server status
+    const serverStatus = String(statusData.status || '').toLowerCase();
+    if (serverStatus === 'completed' || serverStatus === 'error') {
+      console.log(`Server status "${serverStatus}" indicates completion, fetching final result`);
+      await fetchFinalResult(reviewId);
+      stopPolling();
+      return;
+    }
+    
+    // 3. Time-based check - stop polling after a reasonable time (2 minutes max)
+    if (reviewStartTimeRef.current) {
+      const timeSinceStart = Date.now() - reviewStartTimeRef.current;
+      if (timeSinceStart > 120000) { // 2 minutes
+        console.log('Maximum polling time reached (2 minutes), fetching final result');
         await fetchFinalResult(reviewId);
         stopPolling();
         return;
       }
+    }
+    
+    // 4. Content-based check
+    if (statusData.chunks?.length > 0) {
+      const rawText = statusData.chunks.join('');
+      const chunkCount = statusData.chunks.length;
       
-      // Check content-based completion
-      if (statusData.chunks?.length > 0) {
-        const rawText = statusData.chunks.join('');
-        const chunkCount = statusData.chunks.length;
-        
-        // Check if content suggests the review is complete
-        if (isReviewContentComplete(rawText, chunkCount)) {
+      // Either use the full isReviewContentComplete function or this simplified check
+      if (chunkCount >= MIN_CHUNKS_FOR_COMPLETION && 
+          rawText.length > 1000 &&
+          rawText.includes('CLEAN_CODE:') && 
+          rawText.includes('SUGGESTIONS:')) {
+            
+        // Check for proper clean code content after the marker
+        const cleanCodeMatch = rawText.match(/CLEAN_CODE:([\s\S]*?)$/i);
+        if (cleanCodeMatch && cleanCodeMatch[1] && cleanCodeMatch[1].length > 200) {
           console.log('Review appears complete based on content analysis, fetching final result');
           await fetchFinalResult(reviewId);
           stopPolling();
           return;
         }
       }
-      
-      // Continue with status update if not complete
-      setReviewState(prev => {
-        // Calculate progress based on chunks (approximate)
-        const progress = statusData.chunks?.length > 0 ? 
-          Math.min(Math.floor((statusData.chunks.length / 50) * 100), 95) : 
-          prev.progress || 10;
-        
-        // Update the raw text with all chunks
-        const newRawText = statusData.chunks?.join('') || '';
-        
-        // Try to parse the results if we have content
-        let parsed = prev.parsed;
-        let parseError = null;
-        
-        if (newRawText && newRawText !== prev.rawText) {
-          const parsedResult = parseReviewText(newRawText);
-          if (parsedResult.success && parsedResult.result) {
-            parsed = parsedResult.result;
-            console.log('Successfully parsed partial response');
-          } else if (parsedResult.error) {
-            parseError = parsedResult.error;
-            console.warn('Parse error for partial response:', parsedResult.error);
-          }
-        }
-        
-        // Map API status to UI status - explicitly handle all known server statuses
-        let uiStatus: ReviewStreamState = prev.status;
-        
-        switch(serverStatus) {
-          case 'completed':
-            uiStatus = 'completed';
-            break;
-          case 'processing':
-            uiStatus = 'processing';
-            break;
-          case 'queued':
-            uiStatus = 'loading';
-            break;
-          case 'error':
-            uiStatus = 'error';
-            break;
-          case 'repairing':
-            uiStatus = 'repairing';
-            break;
-          default:
-            // Keep existing status if unknown
-            console.warn(`Unknown server status: ${statusData.status}`);
-            break;
-        }
-        
-        console.log(`Mapped to UI status: '${uiStatus}'`);
-
-        return {
-          ...prev,
-          status: uiStatus,
-          rawText: newRawText,
-          parsed,
-          parseError,
-          progress,
-          error: statusData.error || null
-        };
-      });
-      
-      // Continue polling with backoff
-      pollIntervalRef.current = Math.min(
-        pollIntervalRef.current * POLL_BACKOFF_FACTOR, 
-        MAX_POLL_INTERVAL
-      );
-      
-      console.log(`Next poll in ${pollIntervalRef.current}ms`);
-      
-      pollingTimerRef.current = setTimeout(
-        () => pollReviewStatus(reviewId), 
-        pollIntervalRef.current
-      );
-    } catch (error) {
-      console.error('Error polling review status:', error);
-      
-      // Update state with error
-      setReviewState(prev => ({ 
-        ...prev, 
-        status: 'error', 
-        error: error instanceof Error ? error.message : 'Unknown error polling review status'
-      }));
-      
-      stopPolling();
     }
-  }, [fetchFinalResult, stopPolling, isReviewContentComplete]); 
-  
+    
+    // Continue with status update if not complete
+    setReviewState(prev => {
+      // Calculate progress based on chunks (approximate)
+      const progress = statusData.chunks?.length > 0 ? 
+        Math.min(Math.floor((statusData.chunks.length / 50) * 100), 95) : 
+        prev.progress || 10;
+      
+      // Update the raw text with all chunks
+      const newRawText = statusData.chunks?.join('') || '';
+      
+      // Try to parse the results if we have content
+      let parsed = prev.parsed;
+      let parseError = null;
+      
+      if (newRawText && newRawText !== prev.rawText) {
+        const parsedResult = parseReviewText(newRawText);
+        if (parsedResult.success && parsedResult.result) {
+          parsed = parsedResult.result;
+          console.log('Successfully parsed partial response');
+          
+          // If we can parse it successfully, it's likely complete
+          // This is a good indicator to stop polling and get the final result
+          setTimeout(() => {
+            if (isPollingRef.current) {
+              console.log('Successfully parsed content indicates completion');
+              fetchFinalResult(reviewId);
+              stopPolling();
+            }
+          }, 1000);
+        } else if (parsedResult.error) {
+          parseError = parsedResult.error;
+          console.warn('Parse error for partial response:', parsedResult.error);
+        }
+      }
+      
+      // Map API status to UI status - explicitly handle all known server statuses
+      let uiStatus: ReviewStreamState = prev.status;
+      
+      switch(serverStatus) {
+        case 'completed':
+          uiStatus = 'completed';
+          break;
+        case 'processing':
+          uiStatus = 'processing';
+          break;
+        case 'queued':
+          uiStatus = 'loading';
+          break;
+        case 'error':
+          uiStatus = 'error';
+          break;
+        case 'repairing':
+          uiStatus = 'repairing';
+          break;
+        default:
+          // Keep existing status if unknown
+          console.warn(`Unknown server status: ${statusData.status}`);
+          break;
+      }
+      
+      console.log(`Mapped to UI status: '${uiStatus}'`);
+
+      return {
+        ...prev,
+        status: uiStatus,
+        rawText: newRawText,
+        parsed,
+        parseError,
+        progress,
+        error: statusData.error || null
+      };
+    });
+    
+    // Continue polling with backoff
+    pollIntervalRef.current = Math.min(
+      pollIntervalRef.current * POLL_BACKOFF_FACTOR, 
+      MAX_POLL_INTERVAL
+    );
+    
+    console.log(`Next poll in ${pollIntervalRef.current}ms`);
+    
+    pollingTimerRef.current = setTimeout(
+      () => pollReviewStatus(reviewId), 
+      pollIntervalRef.current
+    );
+  } catch (error) {
+    console.error('Error polling review status:', error);
+    
+    // Update state with error
+    setReviewState(prev => ({ 
+      ...prev, 
+      status: 'error', 
+      error: error instanceof Error ? error.message : 'Unknown error polling review status'
+    }));
+    
+    stopPolling();
+  }
+}, [fetchFinalResult, stopPolling]);
   /**
    * Starts a new code review
    * @param code - The code to review
