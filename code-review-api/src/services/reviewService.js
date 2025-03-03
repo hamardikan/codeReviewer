@@ -571,42 +571,7 @@ async function repairWithAI(rawText, language = 'javascript') {
     }
 }
 
-/**
- * Creates a prompt for repairing malformed responses
- * Enhanced to emphasize the importance of complete clean code
- */
-function createRepairPrompt(rawText, language = 'javascript') {
-    return `
-  I received the following ${language} code review, but it doesn't follow the required format or the clean code section is incomplete. 
-  Please restructure it into exactly this format:
-  
-  SUMMARY:
-  [overall feedback about the code]
-  
-  SUGGESTIONS:
-  LINE: [line number]
-  ORIGINAL: [original code]
-  SUGGESTED: [suggested improvement]
-  EXPLANATION: [explanation of why this change improves the code]
-  
-  CLEAN_CODE:
-  [complete improved version of the code]
-  
-  Here is the review text that needs to be reformatted:
-  ${rawText}
-  
-  IMPORTANT GUIDELINES:
-  1. Follow the exact formatting with the section headers exactly as shown
-  2. Make sure to preserve all the technical content while reformatting it
-  3. Limit to a maximum of 10-15 suggestions, focusing on the most important ones
-  4. Do not include duplicate suggestions that address the same issue
-  5. Ensure all code sections are properly formatted with correct indentation
-  6. THE CLEAN CODE SECTION MUST BE COMPLETE AND INCLUDE THE ENTIRE CODEBASE with all improvements integrated
-  7. If the clean code section in the original response is incomplete, please reconstruct it by implementing all the suggestions on the original code
-  8. Do not truncate or abbreviate any part of the clean code - it must be complete and runnable
-  9. The clean code section should be the highest priority - ensure it's complete and properly formatted
-  `;
-}
+
 
 module.exports = {
     startReview,
