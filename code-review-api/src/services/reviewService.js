@@ -50,153 +50,194 @@ async function startReview(code, language, filename) {
  * Processes a review in the background
  */
 async function processReviewInBackground(reviewId, code, language) {
-  try {
-    logger.info(`===== STARTING REVIEW ${reviewId} =====`);
-    logger.info(`Language: ${language}, Code length: ${code.length} characters`);
-    
-    // Update status to processing
-    await storageService.updateReview(reviewId, { status: ReviewStatus.PROCESSING });
-    logger.debug(`Updated review ${reviewId} status to PROCESSING`);
-    
-    // Create the prompt for the code review
-    const prompt = createCodeReviewPrompt(code, language);
-    logger.debug(`Created prompt for ${language} code review, prompt length: ${prompt.length}`);
-    
-    // Start timing the Gemini API call
-    const startTime = Date.now();
-    logger.info(`Calling Gemini API for review ${reviewId}`);
-    
-    // Process the response in chunks
-    let chunkCount = 0;
-    
-    for await (const chunk of geminiService.streamResponse(prompt)) {
-      await storageService.appendChunk(reviewId, chunk);
+    try {
+      logger.info(`===== STARTING REVIEW ${reviewId} =====`);
+      logger.info(`Language: ${language}, Code length: ${code.length} characters`);
       
-      chunkCount++;
-      if (chunkCount % 10 === 0) {
-        const elapsedTime = Math.round((Date.now() - startTime) / 1000);
-        logger.debug(`Review ${reviewId}: Processed ${chunkCount} chunks (${elapsedTime}s elapsed)`);
+      // Update status to processing
+      await storageService.updateReview(reviewId, { status: ReviewStatus.PROCESSING });
+      logger.debug(`Updated review ${reviewId} status to PROCESSING`);
+      
+      // Create the prompt for the code review
+      const prompt = createCodeReviewPrompt(code, language);
+      logger.debug(`Created prompt for ${language} code review, prompt length: ${prompt.length}`);
+      
+      // Start timing the Gemini API call
+      const startTime = Date.now();
+      logger.info(`Calling Gemini API for review ${reviewId}`);
+      
+      // Process the response in chunks
+      let chunkCount = 0;
+      
+      logger.debug(`Starting stream for review ${reviewId}`);
+      const streamGenerator = geminiService.streamResponse(prompt);
+      logger.debug(`Stream generator created for review ${reviewId}`);
+      
+      for await (const chunk of streamGenerator) {
+        logger.debug(`Received chunk for review ${reviewId}: ${chunk.substring(0, 50)}...`);
+        await storageService.appendChunk(reviewId, chunk);
+        
+        chunkCount++;
+        if (chunkCount % 10 === 0) {
+          const elapsedTime = Math.round((Date.now() - startTime) / 1000);
+          logger.debug(`Review ${reviewId}: Processed ${chunkCount} chunks (${elapsedTime}s elapsed)`);
+        }
       }
-    }
-    
-    // Update status to completed
-    await storageService.updateReview(reviewId, { status: ReviewStatus.COMPLETED });
-    logger.info(`Updated review ${reviewId} status to COMPLETED`);
-    
-    // Try to parse the complete response
-    const review = await storageService.getReview(reviewId);
-    if (review) {
-      const rawText = review.getRawText();
-      logger.debug(`Parsing raw text for review ${reviewId}, length: ${rawText.length}`);
       
-      const parseResult = parseReviewText(rawText);
+      // CRITICAL: Update the status to COMPLETED after streaming is done
+      await storageService.updateReview(reviewId, { status: ReviewStatus.COMPLETED });
+      logger.info(`Updated review ${reviewId} status to COMPLETED`);
       
-      if (parseResult.success && parseResult.result) {
-        logger.info(`Successfully parsed response for review ${reviewId}`);
-        logger.debug(`Found ${parseResult.result.suggestions.length} suggestions`);
-        await storageService.updateReview(reviewId, { parsedResponse: parseResult.result });
-      } else {
-        logger.warn(`Failed to parse response for review ${reviewId}: ${parseResult.error}`);
+      // Try to parse the complete response
+      const review = await storageService.getReview(reviewId);
+      if (review) {
+        const rawText = review.getRawText();
+        logger.debug(`Parsing raw text for review ${reviewId}, length: ${rawText.length}`);
+        
+        const parseResult = parseReviewText(rawText);
+        
+        if (parseResult.success && parseResult.result) {
+          logger.info(`Successfully parsed response for review ${reviewId}`);
+          logger.debug(`Found ${parseResult.result.suggestions.length} suggestions`);
+          await storageService.updateReview(reviewId, { parsedResponse: parseResult.result });
+        } else {
+          logger.warn(`Failed to parse response for review ${reviewId}: ${parseResult.error}`);
+        }
       }
+      
+      const totalTime = Math.round((Date.now() - startTime) / 1000);
+      logger.info(`===== COMPLETED REVIEW ${reviewId} in ${totalTime}s with ${chunkCount} chunks =====`);
+    } catch (error) {
+      logger.error(`===== ERROR PROCESSING REVIEW ${reviewId} =====`);
+      logger.error(`Error details:`, error);
+      
+      // Update status to error
+      await storageService.updateReview(reviewId, {
+        status: ReviewStatus.ERROR,
+        error: error.message || 'Unknown error'
+      });
+      logger.info(`Updated review ${reviewId} status to ERROR`);
     }
-    
-    const totalTime = Math.round((Date.now() - startTime) / 1000);
-    logger.info(`===== COMPLETED REVIEW ${reviewId} in ${totalTime}s with ${chunkCount} chunks =====`);
-  } catch (error) {
-    logger.error(`===== ERROR PROCESSING REVIEW ${reviewId} =====`);
-    logger.error(`Error details:`, error);
-    
-    // Update status to error
-    await storageService.updateReview(reviewId, {
-      status: ReviewStatus.ERROR,
-      error: error.message || 'Unknown error'
-    });
-    logger.info(`Updated review ${reviewId} status to ERROR`);
   }
-}
 
 /**
  * Gets the current status of a review
  */
 async function getReviewStatus(reviewId) {
-  try {
-    const review = await storageService.getReview(reviewId);
-    
-    if (!review) {
-      throw new Error(`Review not found: ${reviewId}`);
+    try {
+      const review = await storageService.getReview(reviewId);
+      
+      if (!review) {
+        throw new Error(`Review not found: ${reviewId}`);
+      }
+      
+      // Force complete status if there's significant content but status is still processing
+      let forceComplete = false;
+      if (review.status === ReviewStatus.PROCESSING && review.chunks.length > 0) {
+        const rawText = review.getRawText();
+        // If we have a significant amount of content and it appears complete
+        if (rawText.length > 1000 && 
+            (rawText.includes('CLEAN_CODE:') || 
+             rawText.includes('Clean Code:') || 
+             rawText.includes('clean code:'))) {
+          logger.info(`Review ${reviewId} appears complete based on content but status is still processing`);
+          forceComplete = true;
+        }
+      }
+      
+      return {
+        reviewId,
+        status: forceComplete ? ReviewStatus.COMPLETED : review.status,
+        chunks: review.chunks,
+        lastUpdated: review.lastUpdated,
+        isComplete: forceComplete || review.isComplete() || review.status === ReviewStatus.COMPLETED || review.status === ReviewStatus.ERROR,
+        error: review.error
+      };
+    } catch (error) {
+      logger.error(`Error getting status for review ${reviewId}:`, error);
+      throw error;
     }
-    
-    return {
-      reviewId,
-      status: review.status,
-      chunks: review.chunks,
-      lastUpdated: review.lastUpdated,
-      isComplete: review.isComplete(),
-      error: review.error
-    };
-  } catch (error) {
-    logger.error(`Error getting status for review ${reviewId}:`, error);
-    throw error;
   }
-}
 
 /**
  * Gets the complete result of a review
  */
+/**
+ * Gets the complete result of a review
+ */
 async function getReviewResult(reviewId) {
-  try {
-    const review = await storageService.getReview(reviewId);
-    
-    if (!review) {
-      throw new Error(`Review not found: ${reviewId}`);
-    }
-    
-    const rawText = review.getRawText();
-    
-    // If we already have a parsed response, return it
-    if (review.parsedResponse) {
-      return {
-        reviewId,
-        status: review.status,
-        rawText,
-        parsedResponse: review.parsedResponse,
-        isComplete: review.isComplete(),
-        error: review.error
-      };
-    }
-    
-    // Otherwise, try to parse the raw text
-    const parseResult = parseReviewText(rawText);
-    
-    // If parsing was successful, update the stored review
-    if (parseResult.success && parseResult.result) {
-      await storageService.updateReview(reviewId, { parsedResponse: parseResult.result });
+    try {
+      const review = await storageService.getReview(reviewId);
+      
+      if (!review) {
+        throw new Error(`Review not found: ${reviewId}`);
+      }
+      
+      const rawText = review.getRawText();
+      
+      // Force completed status if we have enough content
+      // This is a safety measure to ensure reviews don't get stuck
+      if (rawText && rawText.length > 1000 && review.status === 'processing') {
+        logger.info(`Review ${reviewId} has significant content but status is still processing, forcing completion`);
+        await storageService.updateReview(reviewId, { status: ReviewStatus.COMPLETED });
+        review.status = ReviewStatus.COMPLETED;
+      }
+      
+      // If we already have a parsed response, return it
+      if (review.parsedResponse) {
+        logger.debug(`Review ${reviewId} already has parsed response, returning it`);
+        
+        return {
+          reviewId,
+          status: review.status,
+          rawText,
+          parsedResponse: review.parsedResponse,
+          isComplete: true, // Force isComplete to true if we have a parsed response
+          error: review.error
+        };
+      }
+      
+      // Try to parse the raw text
+      logger.debug(`Attempting to parse raw text for review ${reviewId}, length: ${rawText?.length || 0}`);
+      const parseResult = parseReviewText(rawText || '');
+      
+      // If parsing was successful, update the stored review and mark as completed
+      if (parseResult.success && parseResult.result) {
+        logger.info(`Successfully parsed review ${reviewId}, updating status to COMPLETED`);
+        
+        // Update with parsedResponse and set status to completed
+        await storageService.updateReview(reviewId, { 
+          parsedResponse: parseResult.result,
+          status: ReviewStatus.COMPLETED 
+        });
+        
+        return {
+          reviewId,
+          status: ReviewStatus.COMPLETED, // Explicitly set to COMPLETED
+          rawText,
+          parsedResponse: parseResult.result,
+          isComplete: true,
+          error: null
+        };
+      }
+      
+      // If parsing failed but we have content and the review isn't in error state,
+      // still return the raw content but with a parse error
+      logger.warn(`Failed to parse review ${reviewId}: ${parseResult.error}`);
       
       return {
         reviewId,
         status: review.status,
-        rawText,
-        parsedResponse: parseResult.result,
-        isComplete: review.isComplete(),
+        rawText: rawText || '',
+        parseError: parseResult.error || 'Failed to parse review content',
+        isComplete: review.isComplete() || rawText?.length > 1000, // Consider complete if we have significant content
         error: review.error
       };
+    } catch (error) {
+      logger.error(`Error getting result for review ${reviewId}:`, error);
+      throw error;
     }
-    
-    // If parsing failed, return the error
-    return {
-      reviewId,
-      status: review.status,
-      rawText,
-      parseError: parseResult.error,
-      isComplete: review.isComplete(),
-      error: review.error
-    };
-  } catch (error) {
-    logger.error(`Error getting result for review ${reviewId}:`, error);
-    throw error;
   }
-}
-
 /**
  * Repairs a malformed review response
  */

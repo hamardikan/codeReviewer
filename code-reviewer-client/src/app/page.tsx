@@ -11,7 +11,7 @@ import { loadReviews, StoredReview } from '@/lib/storage-utils';
 import { getLanguageById } from '@/lib/language-utils';
 
 export default function Home() {
-  const { reviewState, startReview, updateSuggestion, repairParsing } = useReviewStream();
+  const { reviewState, startReview, updateSuggestion, repairParsing, forceRefreshReview } = useReviewStream();
   const [activeTab, setActiveTab] = useState('new-review');
   const [reviews, setReviews] = useState<StoredReview[]>([]);
   const [selectedHistoryReview, setSelectedHistoryReview] = useState<StoredReview | null>(null);
@@ -85,6 +85,11 @@ export default function Home() {
       refreshReviews();
     }
   }, [activeTab]);
+
+  // Log review state changes for debugging
+  useEffect(() => {
+    console.log('Review state updated:', reviewState.status);
+  }, [reviewState.status]);
   
   return (
     <main className="min-h-screen bg-white p-4 md:p-6 max-w-6xl mx-auto">
@@ -162,6 +167,7 @@ export default function Home() {
               reviewState={reviewState}
               onUpdateSuggestion={updateSuggestion}
               onRepairParsing={repairParsing}
+              onForceRefresh={forceRefreshReview}
               originalCode={originalCode}
             />
           ) : (

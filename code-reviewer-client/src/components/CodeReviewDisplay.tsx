@@ -2,7 +2,7 @@
 
 import React, { useState } from 'react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { AlertTriangle, Loader2 } from 'lucide-react';
+import { AlertTriangle, Loader2, RefreshCw } from 'lucide-react';
 import ReviewSummary from './ReviewSummary';
 import SuggestionsList from './SuggestionsList';
 import CleanCodeView from './CleanCodeView';
@@ -12,6 +12,7 @@ interface CodeReviewDisplayProps {
   reviewState: ReviewState;
   onUpdateSuggestion: (suggestionId: string, accepted: boolean | null) => void;
   onRepairParsing: () => void;
+  onForceRefresh?: () => void;
   originalCode?: string;
 }
 
@@ -19,6 +20,7 @@ export default function CodeReviewDisplay({
   reviewState,
   onUpdateSuggestion,
   onRepairParsing,
+  onForceRefresh,
   originalCode
 }: CodeReviewDisplayProps) {
   const [activeTab, setActiveTab] = useState<'suggestions' | 'clean-code'>('suggestions');
@@ -42,11 +44,25 @@ export default function CodeReviewDisplay({
       <div className="space-y-6">
         {renderProgressBar(progress)}
         
-        <div className="flex items-center justify-center space-x-2 py-4 text-green-600">
-          <Loader2 className="h-6 w-6 animate-spin" />
-          <span className="font-medium">
-            {reviewState.status === 'loading' ? 'Starting review...' : 'Analyzing your code...'}
-          </span>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-2 py-4 text-green-600">
+            <Loader2 className="h-6 w-6 animate-spin" />
+            <span className="font-medium">
+              {reviewState.status === 'loading' ? 'Starting review...' : 'Analyzing your code...'}
+            </span>
+          </div>
+          
+          {/* Force refresh button */}
+          {reviewState.reviewId && onForceRefresh && (
+            <button 
+              onClick={onForceRefresh}
+              className="flex items-center space-x-1 px-3 py-2 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md"
+              title="Force refresh result"
+            >
+              <RefreshCw className="h-4 w-4 mr-1" />
+              <span>Force Update</span>
+            </button>
+          )}
         </div>
         
         {reviewState.status === 'processing' && reviewState.rawText && (
@@ -82,9 +98,23 @@ export default function CodeReviewDisplay({
       <div className="space-y-6">
         {renderProgressBar(reviewState.progress || 50)}
         
-        <div className="flex items-center justify-center space-x-2 py-4 text-green-600">
-          <Loader2 className="h-6 w-6 animate-spin" />
-          <span className="font-medium">Streaming analysis...</span>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-2 py-4 text-green-600">
+            <Loader2 className="h-6 w-6 animate-spin" />
+            <span className="font-medium">Streaming analysis...</span>
+          </div>
+          
+          {/* Force refresh button */}
+          {reviewState.reviewId && onForceRefresh && (
+            <button 
+              onClick={onForceRefresh}
+              className="flex items-center space-x-1 px-3 py-2 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md"
+              title="Force refresh result"
+            >
+              <RefreshCw className="h-4 w-4 mr-1" />
+              <span>Force Update</span>
+            </button>
+          )}
         </div>
         
         {reviewState.rawText && (
@@ -130,6 +160,16 @@ export default function CodeReviewDisplay({
                 {reviewState.rawText}
               </div>
             )}
+            
+            {reviewState.reviewId && onForceRefresh && (
+              <button 
+                onClick={onForceRefresh}
+                className="mt-4 flex items-center space-x-1 px-4 py-2 bg-red-100 hover:bg-red-200 text-red-800 rounded-md"
+              >
+                <RefreshCw className="h-4 w-4 mr-1" />
+                <span>Try Force Update</span>
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -148,19 +188,31 @@ export default function CodeReviewDisplay({
               <p className="mt-1 text-yellow-700">
                 {reviewState.parseError}
               </p>
-              <button
-                onClick={onRepairParsing}
-                className="mt-3 px-4 py-2 bg-yellow-100 hover:bg-yellow-200 text-yellow-800 rounded"
-              >
-                {reviewState.status === 'repairing' ? (
-                  <span className="flex items-center">
-                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                    Repairing...
-                  </span>
-                ) : (
-                  'Attempt Repair'
+              <div className="mt-3 flex space-x-3">
+                <button
+                  onClick={onRepairParsing}
+                  className="px-4 py-2 bg-yellow-100 hover:bg-yellow-200 text-yellow-800 rounded"
+                >
+                  {reviewState.status === 'repairing' ? (
+                    <span className="flex items-center">
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      Repairing...
+                    </span>
+                  ) : (
+                    'Attempt Repair'
+                  )}
+                </button>
+                
+                {reviewState.reviewId && onForceRefresh && (
+                  <button 
+                    onClick={onForceRefresh}
+                    className="flex items-center space-x-1 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded"
+                  >
+                    <RefreshCw className="h-4 w-4 mr-1" />
+                    <span>Force Update</span>
+                  </button>
                 )}
-              </button>
+              </div>
             </div>
           </div>
         </div>
@@ -188,20 +240,33 @@ export default function CodeReviewDisplay({
       )}
       
       <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'suggestions' | 'clean-code')}>
-        <TabsList className="bg-gray-100 p-1 rounded-lg mb-6">
-          <TabsTrigger
-            value="suggestions"
-            className="px-4 py-2 rounded"
-          >
-            Suggestions ({reviewState.parsed.suggestions.length})
-          </TabsTrigger>
-          <TabsTrigger
-            value="clean-code"
-            className="px-4 py-2 rounded"
-          >
-            Clean Code
-          </TabsTrigger>
-        </TabsList>
+        <div className="flex justify-between items-center mb-6">
+          <TabsList className="bg-gray-100 p-1 rounded-lg">
+            <TabsTrigger
+              value="suggestions"
+              className="px-4 py-2 rounded"
+            >
+              Suggestions ({reviewState.parsed.suggestions.length})
+            </TabsTrigger>
+            <TabsTrigger
+              value="clean-code"
+              className="px-4 py-2 rounded"
+            >
+              Clean Code
+            </TabsTrigger>
+          </TabsList>
+          
+          {reviewState.reviewId && onForceRefresh && (
+            <button 
+              onClick={onForceRefresh}
+              className="flex items-center space-x-1 px-3 py-2 text-sm bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-md"
+              title="Force refresh result"
+            >
+              <RefreshCw className="h-4 w-4 mr-1" />
+              <span>Refresh</span>
+            </button>
+          )}
+        </div>
         
         <ReviewSummary summary={reviewState.parsed.summary} />
         
