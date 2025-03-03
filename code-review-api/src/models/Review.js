@@ -84,6 +84,7 @@ class ReviewData {
 
   /**
    * Check if the review is complete
+   * Improved to be more strict about clean code content requirements
    */
   isComplete() {
     // Explicit status check
@@ -92,7 +93,7 @@ class ReviewData {
     }
     
     // If we have a parsed response, consider it complete
-    if (this.parsedResponse) {
+    if (this.parsedResponse && this.parsedResponse.cleanCode && this.parsedResponse.cleanCode.length > 300) {
       return true;
     }
     
@@ -107,10 +108,17 @@ class ReviewData {
         
         // If all three sections are present, it's likely complete
         if (hasSummary && hasSuggestions && hasCleanCode) {
-          // Additional check to ensure the clean code section has content
+          // Additional check to ensure the clean code section has sufficient content
           const cleanCodeMatch = rawText.match(/(?:CLEAN[_\s]CODE:|Clean[_\s]Code:|clean[_\s]code:)([\s\S]*?)$/i);
-          if (cleanCodeMatch && cleanCodeMatch[1] && cleanCodeMatch[1].length > 100) {
-            return true;
+          
+          // Require at least 500 characters of clean code for a valid result
+          // This is more strict than the previous 100 characters requirement
+          if (cleanCodeMatch && cleanCodeMatch[1] && cleanCodeMatch[1].length > 500) {
+            // Further validation: check if the clean code contains actual code elements
+            const cleanCodeContent = cleanCodeMatch[1].trim();
+            const hasCodeElements = /function|class|const|var|let|import|export|if|for|while|return|{|}|;/i.test(cleanCodeContent);
+            
+            return hasCodeElements;
           }
         }
       }

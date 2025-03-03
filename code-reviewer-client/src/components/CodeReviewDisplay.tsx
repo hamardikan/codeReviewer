@@ -25,6 +25,15 @@ export default function CodeReviewDisplay({
 }: CodeReviewDisplayProps) {
   const [activeTab, setActiveTab] = useState<'suggestions' | 'clean-code'>('suggestions');
   
+  // Handle clean code repair request
+  const handleCleanCodeRepairRequest = () => {
+    if (onForceRefresh) {
+      onForceRefresh();
+    } else if (onRepairParsing) {
+      onRepairParsing();
+    }
+  };
+  
   // Function to render progress bar
   const renderProgressBar = (progress: number = 0) => (
     <div className="w-full bg-gray-200 rounded-full h-2 mb-4">
@@ -84,6 +93,7 @@ export default function CodeReviewDisplay({
                 isLoading={!reviewState.parsed.cleanCode}
                 suggestions={reviewState.parsed.suggestions}
                 languageId={reviewState.language?.id}
+                onRequestRepair={handleCleanCodeRepairRequest}
               />
             )}
           </div>
@@ -136,6 +146,7 @@ export default function CodeReviewDisplay({
                 isLoading={!reviewState.parsed.cleanCode}
                 suggestions={reviewState.parsed.suggestions}
                 languageId={reviewState.language?.id}
+                onRequestRepair={handleCleanCodeRepairRequest}
               />
             )}
           </div>
@@ -283,6 +294,7 @@ export default function CodeReviewDisplay({
             originalCode={originalCode}
             suggestions={reviewState.parsed.suggestions}
             languageId={reviewState.language.id}
+            onRequestRepair={handleCleanCodeRepairRequest}
           />
         </TabsContent>
       </Tabs>

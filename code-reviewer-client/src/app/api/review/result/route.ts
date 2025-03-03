@@ -49,13 +49,11 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
       };
     }
     
-    // Force completion status if we have content but server didn't mark it as complete
-    if (resultData.rawText && resultData.rawText.length > 1000 && 
-        (!resultData.isComplete || resultData.status === 'processing')) {
-      console.log('[API Route] Content exists but not marked complete, forcing completion');
-      resultData.isComplete = true;
-      resultData.status = 'completed';
-    }
+    /* 
+     * REMOVED FORCING COMPLETION BASED ON CONTENT LENGTH:
+     * We shouldn't mark a review as complete just because it has some content.
+     * Let the server determine completion status properly.
+     */
     
     return NextResponse.json(resultData);
   } catch (error) {
