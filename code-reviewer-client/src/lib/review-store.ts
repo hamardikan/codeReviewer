@@ -13,6 +13,20 @@ export enum ReviewStatus {
 }
 
 /**
+ * Structure of a review status from the API
+ */
+interface ReviewStatusResponse {
+  reviewId: string;
+  status: string;
+  chunks?: string[];
+  timestamp?: number;
+  lastUpdated?: number;
+  error?: string;
+  language?: string;
+  filename?: string;
+}
+
+/**
  * Structure of a review in the store
  */
 export interface ReviewData {
@@ -89,16 +103,17 @@ export class ReviewStore {
    */
   public async getReview(reviewId: string): Promise<ReviewData | null> {
     try {
-      const statusData = await this.apiClient.getReviewStatus(reviewId);
+      const statusData = await this.apiClient.getReviewStatus(reviewId) as ReviewStatusResponse;
       
       if (!statusData) {
         console.log(`[ReviewStore] Review not found: ${reviewId}`);
         return null;
       }
       
+      // Ensure we're using the proper type
       const reviewData: ReviewData = {
         id: reviewId,
-        status: statusData.status,
+        status: statusData.status as ReviewStatus,
         chunks: statusData.chunks || [],
         timestamp: statusData.timestamp || Date.now(),
         lastUpdated: statusData.lastUpdated || Date.now(),
@@ -117,49 +132,56 @@ export class ReviewStore {
   /**
    * Appends a chunk to an existing review
    * This is handled by the API server now, but we keep the interface for compatibility
+   * @param reviewId - The ID of the review
+   * @returns Promise resolving to the updated review or null if not found
    */
-  public async appendChunk(reviewId: string, chunk: string): Promise<ReviewData | null> {
+  public async appendChunk(
+    reviewId: string, 
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    chunk: string
+  ): Promise<ReviewData | null> {
     // In the new architecture, chunks are managed by the API server
-    // This method is kept for compatibility but does nothing
     return this.getReview(reviewId);
   }
 
   /**
    * Updates the status of a review
    * @param reviewId - The ID of the review
-   * @param status - The new status
-   * @param error - Optional error message if status is ERROR
    * @returns Promise resolving to the updated review or null if review not found
    */
   public async updateStatus(
     reviewId: string,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     status: ReviewStatus,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     error?: string
   ): Promise<ReviewData | null> {
     // In the new architecture, status updates are managed by the API server
-    // This method is kept for compatibility but does nothing
     return this.getReview(reviewId);
   }
 
   /**
    * Updates the parsed response for a review
    * @param reviewId - The ID of the review
-   * @param parsedResponse - The parsed code review response
    * @returns Promise resolving to the updated review or null if review not found
    */
   public async updateParsedResponse(
     reviewId: string,
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     parsedResponse: CodeReviewResponse
   ): Promise<ReviewData | null> {
     // In the new architecture, parsed responses are managed by the API server
-    // This method is kept for compatibility but does nothing
     return this.getReview(reviewId);
   }
 
   /**
    * No-op in this architecture since cleanup is handled by the API server
+   * @returns Promise always resolving to true
    */
-  public async deleteReview(reviewId: string): Promise<boolean> {
+  public async deleteReview(
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    reviewId: string
+  ): Promise<boolean> {
     return true;
   }
 }

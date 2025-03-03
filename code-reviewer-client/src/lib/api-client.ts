@@ -1,7 +1,43 @@
 /**
  * Client for communicating with the dedicated API server
  */
-export class ApiClient {
+
+// Review related interfaces
+interface ReviewStartResponse {
+    reviewId: string;
+    status: string;
+  }
+  
+  interface ReviewStatus {
+    reviewId: string;
+    status: string;
+    progress?: number;
+    estimatedCompletionTime?: string;
+  }
+  
+  interface ReviewComment {
+    line: number;
+    message: string;
+    severity: 'error' | 'warning' | 'info' | 'suggestion';
+    code?: string;
+  }
+  
+  interface ReviewResult {
+    reviewId: string;
+    status: string;
+    summary: string;
+    comments: ReviewComment[];
+    suggestedFixes?: string;
+    completedAt?: string;
+  }
+  
+  interface RepairReviewResult {
+    reviewId: string;
+    status: string;
+    repairedResult: ReviewResult;
+  }
+  
+  export class ApiClient {
     private baseUrl: string;
     
     constructor() {
@@ -16,7 +52,7 @@ export class ApiClient {
     /**
      * Start a new code review
      */
-    async startReview(code: string, language: string, filename?: string): Promise<{ reviewId: string; status: string }> {
+    async startReview(code: string, language: string, filename?: string): Promise<ReviewStartResponse> {
       const response = await fetch(`${this.baseUrl}/reviews/start`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -34,7 +70,7 @@ export class ApiClient {
     /**
      * Get the status of a review
      */
-    async getReviewStatus(reviewId: string): Promise<any> {
+    async getReviewStatus(reviewId: string): Promise<ReviewStatus> {
       const response = await fetch(`${this.baseUrl}/reviews/status/${reviewId}`);
       
       if (!response.ok) {
@@ -48,7 +84,7 @@ export class ApiClient {
     /**
      * Get the result of a review
      */
-    async getReviewResult(reviewId: string): Promise<any> {
+    async getReviewResult(reviewId: string): Promise<ReviewResult> {
       const response = await fetch(`${this.baseUrl}/reviews/result/${reviewId}`);
       
       if (!response.ok) {
@@ -62,7 +98,7 @@ export class ApiClient {
     /**
      * Repair a malformed review response
      */
-    async repairReview(reviewId: string, rawText: string, language: string): Promise<any> {
+    async repairReview(reviewId: string, rawText: string, language: string): Promise<RepairReviewResult> {
       const response = await fetch(`${this.baseUrl}/reviews/repair`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
