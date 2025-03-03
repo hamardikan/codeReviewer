@@ -35,9 +35,7 @@ export interface ReviewState {
 const INITIAL_POLL_INTERVAL = 1000; // 1 second
 const MAX_POLL_INTERVAL = 5000; // 5 seconds
 const POLL_BACKOFF_FACTOR = 1.5; // Increase interval by 50% each time
-const MIN_COMPLETION_TIME_MS = 10000; // 10 seconds - minimum time before considering content-based completion
-const MIN_CHUNKS_FOR_COMPLETION = 10; // Need at least this many chunks before considering content-based completion
-const MAX_POLL_TIME_MS = 180000; // 3 minutes maximum polling time (increased from 2 minutes)
+const MAX_POLL_TIME_MS = 300000; // 5 minutes maximum polling time (increased from 3 minutes)
 
 /**
  * Custom hook for managing asynchronous code reviews
@@ -87,67 +85,8 @@ export function useReviewStream() {
     console.log('Polling stopped');
   }, []);
   
-  /**
-   * Determines if a review is complete based on content analysis
-   * @param text - Raw text content to analyze
-   * @param chunkCount - Number of chunks received so far
-   * @returns Whether the review appears complete
-   */
-  const isReviewContentComplete = useCallback((text: string, chunkCount: number): boolean => {
-    // Don't check for completion if we haven't received enough chunks
-    if (chunkCount < MIN_CHUNKS_FOR_COMPLETION) {
-      return false;
-    }
-    
-    // Check if enough time has passed since the review started
-    if (reviewStartTimeRef.current) {
-      const timeSinceStart = Date.now() - reviewStartTimeRef.current;
-      if (timeSinceStart < MIN_COMPLETION_TIME_MS) {
-        console.log(`Only ${Math.round(timeSinceStart / 1000)}s since review started, not checking content completion yet`);
-        return false;
-      }
-    }
-    
-    // Look for all three required sections
-    const hasSummary = /SUMMARY:|Summary:|summary:/i.test(text);
-    const hasSuggestions = /SUGGESTIONS:|Suggestions:|suggestions:/i.test(text);
-    const hasCleanCode = /CLEAN[_\s]CODE:|Clean[_\s]Code:|clean[_\s]code:/i.test(text);
-    
-    // Need all three sections
-    if (!hasSummary || !hasSuggestions || !hasCleanCode) {
-      console.log(`Missing required sections: Summary: ${hasSummary}, Suggestions: ${hasSuggestions}, CleanCode: ${hasCleanCode}`);
-      return false;
-    }
-    
-    // Check that the CLEAN_CODE section appears to be significant
-    // It should be the last section, so it should come after SUGGESTIONS
-    const cleanCodeMatch = text.match(/(?:CLEAN[_\s]CODE:|Clean[_\s]Code:|clean[_\s]code:)([\s\S]*?)$/i);
-    if (!cleanCodeMatch || !cleanCodeMatch[1] || cleanCodeMatch[1].length < 500) {
-      console.log('Clean code section is missing or too short');
-      return false;
-    }
-    
-    // Additional check: ensure balanced braces in clean code
-    const cleanCodeContent = cleanCodeMatch[1];
-    const openBraces = (cleanCodeContent.match(/{/g) || []).length;
-    const closeBraces = (cleanCodeContent.match(/}/g) || []).length;
-    
-    if (openBraces > closeBraces) {
-      console.log(`Unbalanced braces in clean code: ${openBraces} open vs ${closeBraces} close`);
-      return false;
-    }
-    
-    // Try parsing the full content
-    const parseResult = parseReviewText(text);
-    if (parseResult.success && parseResult.result) {
-      // If parsing succeeds, that's strong evidence the review is complete
-      console.log('Successful parse indicates review completion');
-      return true;
-    }
-    
-    // Not yet complete
-    return false;
-  }, []);
+  // Track the last content length fetched
+  const lastContentLengthRef = useRef<Record<string, number>>({});
   
   /**
    * Fetches the final result of a review
@@ -165,6 +104,45 @@ export function useReviewStream() {
       
       const resultData = await response.json();
       console.log('Received final result:', resultData);
+      
+      // Check if content is still changing between fetch calls
+      const currentContentLength = resultData.rawText?.length || 0;
+      const lastLength = lastContentLengthRef.current[reviewId] || 0;
+      
+      if (lastLength > 0 && currentContentLength > lastLength) {
+        console.log(`Content still growing in final result (${lastLength} -> ${currentContentLength})`);
+        
+        // Update the stored length
+        lastContentLengthRef.current[reviewId] = currentContentLength;
+        
+        // If it's been less than the max polling time, restart polling
+        if (reviewStartTimeRef.current) {
+          const timeSinceStart = Date.now() - reviewStartTimeRef.current;
+          if (timeSinceStart < MAX_POLL_TIME_MS) {
+            console.log('Content still changing, restarting polling');
+            
+            // Update state but restart polling
+            setReviewState(prev => ({
+              ...prev,
+              rawText: resultData.rawText || prev.rawText,
+              status: 'processing',
+              progress: 90
+            }));
+            
+            isPollingRef.current = true;
+            pollIntervalRef.current = INITIAL_POLL_INTERVAL;
+            pollingTimerRef.current = setTimeout(
+              () => pollReviewStatus(reviewId), 
+              INITIAL_POLL_INTERVAL
+            );
+            
+            return;
+          }
+        }
+      }
+      
+      // Update the stored length
+      lastContentLengthRef.current[reviewId] = currentContentLength;
       
       // Determine status based on the response
       let status: ReviewStreamState = 'completed';
@@ -289,9 +267,56 @@ export function useReviewStream() {
         isComplete: statusData.isComplete
       });
       
+      // Store the current content length for change detection
+      const currentContentLength = statusData.chunks?.join('').length || 0;
+      const prevContentLength = reviewState.rawText.length;
+      const contentChanged = currentContentLength > prevContentLength;
+      
       // CRITICAL SECTION: Check for any completion indicators
       
-      // 1. Check explicit server completion flag
+      // If server says it's complete but content is still changing, don't stop polling
+      if (contentChanged) {
+        console.log(`Content still changing (${prevContentLength} -> ${currentContentLength}), continuing to poll regardless of status`);
+        
+        // Update state with latest content but don't stop polling
+        setReviewState(prev => {
+          const newRawText = statusData.chunks?.join('') || '';
+          
+          // Try to parse the results with latest content
+          let parsed = prev.parsed;
+          let parseError = null;
+          
+          if (newRawText && newRawText !== prev.rawText) {
+            const parsedResult = parseReviewText(newRawText);
+            if (parsedResult.success && parsedResult.result) {
+              parsed = parsedResult.result;
+            } else if (parsedResult.error) {
+              parseError = parsedResult.error;
+            }
+          }
+          
+          return {
+            ...prev,
+            rawText: newRawText,
+            parsed,
+            parseError,
+            progress: Math.min(Math.floor((statusData.chunks?.length || 0) / 50) * 100, 95)
+          };
+        });
+        
+        // Continue polling with a short interval when content is actively changing
+        const dynamicInterval = Math.min(INITIAL_POLL_INTERVAL, pollIntervalRef.current);
+        console.log(`Content changing, polling again in ${dynamicInterval}ms`);
+        
+        pollingTimerRef.current = setTimeout(
+          () => pollReviewStatus(reviewId), 
+          dynamicInterval
+        );
+        
+        return;
+      }
+      
+      // 1. Check explicit server completion flag + content not changing
       if (statusData.isComplete === true) {
         console.log('Server explicitly set isComplete to true, fetching final result');
         await fetchFinalResult(reviewId);
@@ -299,7 +324,7 @@ export function useReviewStream() {
         return;
       }
       
-      // 2. Check server status
+      // 2. Check server status + content not changing
       const serverStatus = String(statusData.status || '').toLowerCase();
       if (serverStatus === 'completed' || serverStatus === 'error') {
         console.log(`Server status "${serverStatus}" indicates completion, fetching final result`);
@@ -308,53 +333,18 @@ export function useReviewStream() {
         return;
       }
       
-      // 3. Time-based check - stop polling after a reasonable time
+      // 3. Time-based safety check - stop polling after a maximum time
       if (reviewStartTimeRef.current) {
         const timeSinceStart = Date.now() - reviewStartTimeRef.current;
-        if (timeSinceStart > MAX_POLL_TIME_MS) { // 3 minutes
-          console.log('Maximum polling time reached (3 minutes), fetching final result');
+        if (timeSinceStart > MAX_POLL_TIME_MS) { // 5 minutes
+          console.log('Maximum polling time reached (5 minutes), fetching final result');
           await fetchFinalResult(reviewId);
           stopPolling();
           return;
         }
       }
       
-      // 4. Content-based check
-      if (statusData.chunks?.length > 0) {
-        const rawText = statusData.chunks.join('');
-        const chunkCount = statusData.chunks.length;
-        
-        // Check if the content appears complete based on pattern analysis
-        if (isReviewContentComplete(rawText, chunkCount)) {
-          console.log('Review appears complete based on content analysis, fetching final result');
-          await fetchFinalResult(reviewId);
-          stopPolling();
-          return;
-        }
-        
-        // Simplified check for substantial clean code
-        if (chunkCount >= MIN_CHUNKS_FOR_COMPLETION && 
-            rawText.length > 1000) {
-            
-          // Check for clean code section with substantial content
-          const cleanCodeMatch = rawText.match(/CLEAN_CODE:([\s\S]*?)$/i);
-          if (cleanCodeMatch && cleanCodeMatch[1] && cleanCodeMatch[1].length > 500) {
-            // Additional check: ensure balanced braces in clean code
-            const cleanCodeContent = cleanCodeMatch[1];
-            const openBraces = (cleanCodeContent.match(/{/g) || []).length;
-            const closeBraces = (cleanCodeContent.match(/}/g) || []).length;
-            
-            if (openBraces <= closeBraces) {
-              console.log('Clean code section appears complete with balanced braces, fetching final result');
-              await fetchFinalResult(reviewId);
-              stopPolling();
-              return;
-            }
-          }
-        }
-      }
-      
-      // Continue with status update if not complete
+      // Update state with current data
       setReviewState(prev => {
         // Calculate progress based on chunks (approximate)
         const progress = statusData.chunks?.length > 0 ? 
@@ -364,7 +354,7 @@ export function useReviewStream() {
         // Update the raw text with all chunks
         const newRawText = statusData.chunks?.join('') || '';
         
-        // Try to parse the results if we have content
+        // Try to parse the results if we have content - but don't use this to determine completion
         let parsed = prev.parsed;
         let parseError = null;
         
@@ -373,19 +363,6 @@ export function useReviewStream() {
           if (parsedResult.success && parsedResult.result) {
             parsed = parsedResult.result;
             console.log('Successfully parsed partial response');
-            
-            // Check if clean code has sufficient content
-            if (parsed.cleanCode && parsed.cleanCode.length > 500) {
-              // If we can parse it successfully with substantial clean code,
-              // it's likely complete. Stop polling and get the final result.
-              setTimeout(() => {
-                if (isPollingRef.current) {
-                  console.log('Successfully parsed content with substantial clean code indicates completion');
-                  fetchFinalResult(reviewId);
-                  stopPolling();
-                }
-              }, 1000);
-            }
           } else if (parsedResult.error) {
             parseError = parsedResult.error;
             console.warn('Parse error for partial response:', parsedResult.error);
@@ -469,7 +446,7 @@ export function useReviewStream() {
       
       stopPolling();
     }
-  }, [fetchFinalResult, stopPolling, isReviewContentComplete]);
+  }, [fetchFinalResult, stopPolling]);
 
   /**
    * Starts a new code review

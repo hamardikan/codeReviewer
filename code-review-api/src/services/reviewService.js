@@ -4,7 +4,7 @@ const { v4: uuid } = require('uuid');
 const geminiService = require('./geminiService');
 const storageService = require('./storageService');
 const { createCodeReviewPrompt, createRepairPrompt } = require('../utils/prompts');
-const { parseReviewText, repairWithRegex } = require('../utils/parser');
+const { parseReviewText, repairWithRegex, extractCleanCode } = require('../utils/parser');
 const { ReviewData, ReviewStatus } = require('../models/Review');
 const logger = require('../utils/logger');
 
@@ -81,16 +81,79 @@ async function processReviewInBackground(reviewId, code, language) {
         let chunkCount = 0;
         let parseAttempts = 0;
         let lastParseAttemptChunkCount = 0;
+        let lastContentLength = 0;
+        let noChangeCounter = 0;
+        
+        // Set a flag to track if the content seems complete
+        let contentAppearsComplete = false;
 
         logger.debug(`Starting stream for review ${reviewId}`);
         const streamGenerator = geminiService.streamResponse(prompt);
         logger.debug(`Stream generator created for review ${reviewId}`);
 
         for await (const chunk of streamGenerator) {
-            logger.debug(`Received chunk for review ${reviewId}: ${chunk.substring(0, 50)}...`);
+            logger.debug(`Received chunk ${chunkCount + 1} for review ${reviewId}: ${chunk.substring(0, 50)}...`);
             await storageService.appendChunk(reviewId, chunk);
 
             chunkCount++;
+            
+            // Periodically check if content is growing
+            if (chunkCount % 5 === 0) {
+                const review = await storageService.getReview(reviewId);
+                const currentContentLength = review.getRawText().length;
+                
+                // Log content growth
+                logger.debug(`Review ${reviewId}: Content length ${lastContentLength} -> ${currentContentLength} (chunk ${chunkCount})`);
+                
+                // Check if content is no longer growing
+                if (currentContentLength === lastContentLength) {
+                    noChangeCounter++;
+                    logger.debug(`Review ${reviewId}: No content change detected (${noChangeCounter}/3)`);
+                    
+                    // If we've had no change for 3 consecutive checks, we'll validate content completeness
+                    if (noChangeCounter >= 3) {
+                        logger.info(`Review ${reviewId}: Content appears stable after ${chunkCount} chunks, checking completeness`);
+                        
+                        // Now check if the content appears complete based on patterns
+                        const rawText = review.getRawText();
+                        
+                        // Check for completion markers
+                        const hasSummary = /SUMMARY:|Summary:|summary:/i.test(rawText);
+                        const hasSuggestions = /SUGGESTIONS:|Suggestions:|suggestions:/i.test(rawText);
+                        const hasCleanCode = /CLEAN[_\s]CODE:|Clean[_\s]Code:|clean[_\s]code:/i.test(rawText);
+                        
+                        // Check for substantial clean code content if we have all sections
+                        if (hasSummary && hasSuggestions && hasCleanCode) {
+                            const cleanCodeMatch = rawText.match(/(?:CLEAN[_\s]CODE:|Clean[_\s]Code:|clean[_\s]code:)([\s\S]*?)$/i);
+                            
+                            // If we have substantial clean code content, consider it potentially complete
+                            if (cleanCodeMatch && cleanCodeMatch[1] && cleanCodeMatch[1].length > 500) {
+                                const cleanCode = cleanCodeMatch[1];
+                                
+                                // Make sure we have balanced braces in the clean code
+                                const openBraces = (cleanCode.match(/{/g) || []).length;
+                                const closeBraces = (cleanCode.match(/}/g) || []).length;
+                                
+                                if (openBraces === closeBraces && openBraces > 0) {
+                                    logger.info(`Review ${reviewId}: Content appears complete (all sections present, balanced braces)`);
+                                    contentAppearsComplete = true;
+                                } else {
+                                    logger.info(`Review ${reviewId}: Clean code has unbalanced braces (${openBraces} open vs ${closeBraces} close)`);
+                                }
+                            } else {
+                                logger.info(`Review ${reviewId}: Clean code section is missing or too short`);
+                            }
+                        } else {
+                            logger.info(`Review ${reviewId}: Missing required sections - Summary: ${hasSummary}, Suggestions: ${hasSuggestions}, CleanCode: ${hasCleanCode}`);
+                        }
+                    }
+                } else {
+                    // Reset the counter if content is still growing
+                    noChangeCounter = 0;
+                    lastContentLength = currentContentLength;
+                }
+            }
+
             if (chunkCount % 10 === 0) {
                 const elapsedTime = Math.round((Date.now() - startTime) / 1000);
                 logger.debug(`Review ${reviewId}: Processed ${chunkCount} chunks (${elapsedTime}s elapsed)`);
@@ -125,14 +188,61 @@ async function processReviewInBackground(reviewId, code, language) {
             }
         }
 
-        // CRITICAL: Update the status to COMPLETED after streaming is done
+        logger.info(`Gemini stream ended for review ${reviewId} after ${chunkCount} chunks`);
+        
+        // Get the current review state to analyze content
+        const review = await storageService.getReview(reviewId);
+        const rawText = review.getRawText();
+        
+        // Log the final content length
+        logger.info(`Review ${reviewId}: Final content length after stream ended: ${rawText.length} characters`);
+        
+        // Check if content appears to be truncated or incomplete
+        const hasSummary = /SUMMARY:|Summary:|summary:/i.test(rawText);
+        const hasSuggestions = /SUGGESTIONS:|Suggestions:|suggestions:/i.test(rawText);
+        const hasCleanCode = /CLEAN[_\s]CODE:|Clean[_\s]Code:|clean[_\s]code:/i.test(rawText);
+        
+        if (!hasSummary || !hasSuggestions || !hasCleanCode) {
+            logger.warn(`Review ${reviewId}: Stream ended with INCOMPLETE content - missing required sections`);
+            logger.warn(`Review ${reviewId}: Has Summary: ${hasSummary}, Has Suggestions: ${hasSuggestions}, Has Clean Code: ${hasCleanCode}`);
+            
+            // If the content is severely incomplete, we might not want to mark it as completed
+            // However, we need to move forward, so we'll mark it as completed but with a warning
+            logger.warn(`Review ${reviewId}: Marking as COMPLETED despite incomplete content`);
+            contentAppearsComplete = false;
+        } else {
+            // Check for sufficient clean code
+            const cleanCodeMatch = rawText.match(/(?:CLEAN[_\s]CODE:|Clean[_\s]Code:|clean[_\s]code:)([\s\S]*?)$/i);
+            if (!cleanCodeMatch || !cleanCodeMatch[1] || cleanCodeMatch[1].length < 300) {
+                logger.warn(`Review ${reviewId}: Stream ended with INSUFFICIENT clean code section`);
+                contentAppearsComplete = false;
+            } else {
+                // Check for balanced braces in clean code
+                const cleanCode = cleanCodeMatch[1];
+                const openBraces = (cleanCode.match(/{/g) || []).length;
+                const closeBraces = (cleanCode.match(/}/g) || []).length;
+                
+                if (openBraces !== closeBraces) {
+                    logger.warn(`Review ${reviewId}: Clean code has UNBALANCED braces (${openBraces} open vs ${closeBraces} close)`);
+                    contentAppearsComplete = false;
+                } else {
+                    logger.info(`Review ${reviewId}: Content appears structurally complete and valid`);
+                    contentAppearsComplete = true;
+                }
+            }
+        }
+        
+        // CRITICAL: Update the status to COMPLETED only after validating content
+        if (contentAppearsComplete) {
+            logger.info(`Review ${reviewId}: Setting status to COMPLETED - content validation passed`);
+        } else {
+            logger.warn(`Review ${reviewId}: Setting status to COMPLETED despite content validation failing - stream has ended`);
+        }
+        
         await storageService.updateReview(reviewId, { status: ReviewStatus.COMPLETED });
-        logger.info(`Updated review ${reviewId} status to COMPLETED`);
 
         // Try to parse the complete response
-        const review = await storageService.getReview(reviewId);
         if (review) {
-            const rawText = review.getRawText();
             logger.debug(`Parsing final raw text for review ${reviewId}, length: ${rawText.length}`);
 
             const parseResult = parseReviewText(rawText);
@@ -183,7 +293,7 @@ async function processReviewInBackground(reviewId, code, language) {
 
 /**
  * Gets the current status of a review
- * Improved to better handle completion detection
+ * Fixed to avoid premature completion
  */
 async function getReviewStatus(reviewId) {
     try {
@@ -193,45 +303,17 @@ async function getReviewStatus(reviewId) {
             throw new Error(`Review not found: ${reviewId}`);
         }
 
-        // Force complete status if there's significant content but status is still processing
-        let forceComplete = false;
-
-        if (review.status === ReviewStatus.PROCESSING && review.chunks.length > 0) {
-            const rawText = review.getRawText();
-
-            // More comprehensive check for completion
-            if (rawText.length > 1000) {
-                // Check for completion based on content markers
-                const hasSummary = /SUMMARY:|Summary:|summary:/i.test(rawText);
-                const hasSuggestions = /SUGGESTIONS:|Suggestions:|suggestions:/i.test(rawText);
-                const hasCleanCode = /CLEAN[_\s]CODE:|Clean[_\s]Code:|clean[_\s]code:/i.test(rawText);
-
-                // If we have all three sections, examine the clean code section more carefully
-                if (hasSummary && hasSuggestions && hasCleanCode) {
-                    const cleanCodeMatch = rawText.match(/(?:CLEAN[_\s]CODE:|Clean[_\s]Code:|clean[_\s]code:)([\s\S]*?)$/i);
-
-                    // If we have substantial clean code content, force complete
-                    if (cleanCodeMatch && cleanCodeMatch[1] && cleanCodeMatch[1].length > 500) {
-                        logger.info(`Review ${reviewId} appears complete based on content but status is still processing`);
-                        forceComplete = true;
-                    }
-                }
-            }
-        }
-
-        // Another check: if we have parsed response with sufficient clean code, consider it complete
-        if (review.parsedResponse &&
-            review.parsedResponse.cleanCode &&
-            review.parsedResponse.cleanCode.length > 300) {
-            forceComplete = true;
-        }
+        // IMPORTANT: Don't force completion based on content analysis
+        // Let the stream completion in processReviewInBackground be the only thing
+        // that changes status to COMPLETED
 
         return {
             reviewId,
-            status: forceComplete ? ReviewStatus.COMPLETED : review.status,
+            status: review.status,
             chunks: review.chunks,
             lastUpdated: review.lastUpdated,
-            isComplete: forceComplete || review.isComplete() || review.status === ReviewStatus.COMPLETED || review.status === ReviewStatus.ERROR,
+            // Only mark as complete if the status is COMPLETED or ERROR
+            isComplete: review.status === ReviewStatus.COMPLETED || review.status === ReviewStatus.ERROR,
             error: review.error
         };
     } catch (error) {
@@ -242,7 +324,7 @@ async function getReviewStatus(reviewId) {
 
 /**
  * Gets the complete result of a review
- * Improved to handle various edge cases and ensure complete responses
+ * Fixed to avoid premature completion
  */
 async function getReviewResult(reviewId) {
     try {
@@ -254,15 +336,11 @@ async function getReviewResult(reviewId) {
 
         const rawText = review.getRawText();
 
-        // Force completed status if we have enough content
-        // This is a safety measure to ensure reviews don't get stuck
-        if (rawText && rawText.length > 1000 && review.status === 'processing') {
-            logger.info(`Review ${reviewId} has significant content but status is still processing, forcing completion`);
-            await storageService.updateReview(reviewId, { status: ReviewStatus.COMPLETED });
-            review.status = ReviewStatus.COMPLETED;
-        }
+        // IMPORTANT: Don't force completion based on content length
+        // Let the stream completion in processReviewInBackground be the only thing
+        // that changes status to COMPLETED
 
-        // If we already have a parsed response, verify it has complete clean code
+        // If we already have a parsed response, return it
         if (review.parsedResponse) {
             // Check if clean code appears incomplete (suspiciously short)
             if (review.parsedResponse.cleanCode && review.parsedResponse.cleanCode.length < 300 && rawText.length > 2000) {
@@ -296,7 +374,8 @@ async function getReviewResult(reviewId) {
                 status: review.status,
                 rawText,
                 parsedResponse: review.parsedResponse,
-                isComplete: true, // Force isComplete to true if we have a parsed response
+                // Only mark as complete if the status is COMPLETED or ERROR
+                isComplete: review.status === ReviewStatus.COMPLETED || review.status === ReviewStatus.ERROR,
                 error: review.error
             };
         }
@@ -305,22 +384,22 @@ async function getReviewResult(reviewId) {
         logger.debug(`Attempting to parse raw text for review ${reviewId}, length: ${rawText?.length || 0}`);
         const parseResult = parseReviewText(rawText || '');
 
-        // If parsing was successful, update the stored review and mark as completed
+        // If parsing was successful, update the stored review but DON'T change status
         if (parseResult.success && parseResult.result) {
-            logger.info(`Successfully parsed review ${reviewId}, updating status to COMPLETED`);
+            logger.info(`Successfully parsed review ${reviewId}`);
 
-            // Update with parsedResponse and set status to completed
+            // Update with parsedResponse but don't change status
             await storageService.updateReview(reviewId, {
-                parsedResponse: parseResult.result,
-                status: ReviewStatus.COMPLETED
+                parsedResponse: parseResult.result
             });
 
             return {
                 reviewId,
-                status: ReviewStatus.COMPLETED, // Explicitly set to COMPLETED
+                status: review.status, // Keep original status
                 rawText,
                 parsedResponse: parseResult.result,
-                isComplete: true,
+                // Only mark as complete if the status is COMPLETED or ERROR
+                isComplete: review.status === ReviewStatus.COMPLETED || review.status === ReviewStatus.ERROR,
                 error: null
             };
         }
@@ -330,20 +409,20 @@ async function getReviewResult(reviewId) {
         const repairResult = repairWithRegex(rawText || '');
 
         if (repairResult.success && repairResult.result) {
-            logger.info(`Successfully repaired review ${reviewId}, updating status to COMPLETED`);
+            logger.info(`Successfully repaired review ${reviewId}`);
 
-            // Update with repaired response and set status to completed
+            // Update with repaired response but don't change status
             await storageService.updateReview(reviewId, {
-                parsedResponse: repairResult.result,
-                status: ReviewStatus.COMPLETED
+                parsedResponse: repairResult.result
             });
 
             return {
                 reviewId,
-                status: ReviewStatus.COMPLETED, // Explicitly set to COMPLETED
+                status: review.status, // Keep original status
                 rawText,
                 parsedResponse: repairResult.result,
-                isComplete: true,
+                // Only mark as complete if the status is COMPLETED or ERROR
+                isComplete: review.status === ReviewStatus.COMPLETED || review.status === ReviewStatus.ERROR,
                 error: null
             };
         }
@@ -357,7 +436,8 @@ async function getReviewResult(reviewId) {
             status: review.status,
             rawText: rawText || '',
             parseError: parseResult.error || 'Failed to parse review content',
-            isComplete: review.isComplete() || rawText?.length > 1000, // Consider complete if we have significant content
+            // Only mark as complete if the status is COMPLETED or ERROR
+            isComplete: review.status === ReviewStatus.COMPLETED || review.status === ReviewStatus.ERROR,
             error: review.error
         };
     } catch (error) {
@@ -526,7 +606,7 @@ function createRepairPrompt(rawText, language = 'javascript') {
   8. Do not truncate or abbreviate any part of the clean code - it must be complete and runnable
   9. The clean code section should be the highest priority - ensure it's complete and properly formatted
   `;
-}ß
+}
 
 module.exports = {
     startReview,

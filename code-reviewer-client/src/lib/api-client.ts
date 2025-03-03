@@ -98,10 +98,8 @@ interface ReviewStartResponse {
       
       const statusData = await response.json();
       
-      // Add calculated isComplete if not provided by server
-      if (statusData.status === 'completed' || statusData.status === 'error') {
-        statusData.isComplete = true;
-      }
+      // IMPORTANT: Don't override isComplete flag
+      // Let the server determine whether the review is complete
       
       return statusData;
     }
@@ -121,10 +119,8 @@ interface ReviewStartResponse {
       
       const resultData = await response.json();
       
-      // Add calculated isComplete if not provided by server
-      if (resultData.status === 'completed' || resultData.status === 'error') {
-        resultData.isComplete = true;
-      }
+      // IMPORTANT: Don't override isComplete flag
+      // Let the server determine whether the review is complete
       
       // Make sure we have a valid parsed response structure to prevent UI errors
       if (!resultData.parsedResponse && resultData.rawText) {
