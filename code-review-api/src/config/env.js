@@ -16,7 +16,8 @@ const config = {
     apiKey: process.env.GEMINI_API_KEY,
     model: process.env.GEMINI_MODEL || 'gemini-2.0-flash',
     generationConfig: {
-      maxOutputTokens: parseInt(process.env.MAX_OUTPUT_TOKENS || '65536', 10),
+      // Increased token limit to ensure complete responses
+      maxOutputTokens: parseInt(process.env.MAX_OUTPUT_TOKENS || '131072', 10), // Doubled from 65536
       temperature: parseFloat(process.env.TEMPERATURE || '0.7'),
       topP: parseFloat(process.env.TOP_P || '0.95'),
       topK: parseInt(process.env.TOP_K || '64', 10)

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Clipboard, Check, Code, RefreshCw } from 'lucide-react';
+import { Clipboard, Check, Code, RefreshCw, AlertTriangle } from 'lucide-react';
 import SyntaxHighlighter from 'react-syntax-highlighter';
 import { vs2015 } from 'react-syntax-highlighter/dist/esm/styles/hljs';
 import { CodeSuggestion } from '@/lib/prompts';
@@ -12,6 +12,7 @@ interface CleanCodeViewProps {
   suggestions: CodeSuggestion[];
   languageId?: string;
   isLoading?: boolean;
+  onRequestRepair?: () => void;
 }
 
 export default function CleanCodeView({ 
@@ -19,11 +20,32 @@ export default function CleanCodeView({
   originalCode,
   suggestions,
   languageId = 'javascript',
-  isLoading = false 
+  isLoading = false,
+  onRequestRepair
 }: CleanCodeViewProps) {
   const [copied, setCopied] = useState(false);
   const [showMode, setShowMode] = useState<'ai' | 'custom'>('ai');
   const [customCode, setCustomCode] = useState('');
+  const [codeIsSuspicious, setCodeIsSuspicious] = useState(false);
+  
+  // Check if the clean code appears incomplete or suspiciously short
+  useEffect(() => {
+    if (cleanCode) {
+      const isSuspicious = 
+        // Suspiciously short compared to original code
+        (originalCode && cleanCode.length < originalCode.length * 0.7) ||
+        // Contains truncation markers
+        cleanCode.includes('...') ||
+        // Sudden end without proper closure
+        (cleanCode.match(/{/g)?.length || 0) > (cleanCode.match(/}/g)?.length || 0) ||
+        // Suspiciously short in absolute terms
+        (originalCode && originalCode.length > 500 && cleanCode.length < 300);
+        
+      setCodeIsSuspicious(Boolean(isSuspicious));
+    } else {
+      setCodeIsSuspicious(false);
+    }
+  }, [cleanCode, originalCode]);
   
   // Generate custom code based on accepted suggestions
   useEffect(() => {
@@ -191,6 +213,24 @@ export default function CleanCodeView({
           )}
         </button>
       </div>
+      
+      {/* Warning for suspicious code */}
+      {codeIsSuspicious && showMode === 'ai' && (
+        <div className="bg-yellow-50 px-4 py-2 border-b border-yellow-200 flex items-center">
+          <AlertTriangle className="h-4 w-4 text-yellow-600 mr-2" />
+          <span className="text-sm text-yellow-700">
+            This code may be incomplete. 
+            {onRequestRepair && (
+              <button 
+                onClick={onRequestRepair}
+                className="ml-2 px-2 py-0.5 bg-yellow-100 hover:bg-yellow-200 text-yellow-800 rounded text-sm"
+              >
+                Attempt repair
+              </button>
+            )}
+          </span>
+        </div>
+      )}
       
       <div className="relative">
         <SyntaxHighlighter
